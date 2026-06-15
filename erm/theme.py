@@ -274,13 +274,13 @@ QPushButton:checked {
 }
 
 QPushButton#primaryButton {
-    background-color: #E5484D;
+    background-color: #3D5AFE;
     font-weight: 700;
     font-size: 14px;
     padding: 12px 14px;
 }
 QPushButton#primaryButton:hover {
-    background-color: #FF6B6B;
+    background-color: #5470FF;
 }
 
 QPushButton#dangerButton {
@@ -288,9 +288,12 @@ QPushButton#dangerButton {
 }
 
 QPushButton#playVideoButton {
-    background-color: #3A2A2E;
-    color: #FF9B9B;
+    background-color: #2F3A52;
+    color: #9FC3FF;
     font-weight: 700;
+}
+QPushButton#playVideoButton:hover {
+    background-color: #3D4D6E;
 }
 
 QLineEdit, QTextEdit, QPlainTextEdit {
@@ -344,7 +347,7 @@ QPushButton#tabButton:hover {
 }
 QPushButton#tabButton:checked {
     color: #F5F6FA;
-    border-bottom: 3px solid #E5484D;
+    border-bottom: 3px solid #3D5AFE;
 }
 
 QWidget#audioChannelStrip {
@@ -375,16 +378,16 @@ QSlider::groove:vertical {
     border-radius: 3px;
 }
 QSlider::handle:vertical {
-    background-color: #E5484D;
+    background-color: #3D5AFE;
     height: 16px;
     margin: 0 -6px;
     border-radius: 8px;
 }
 QSlider::handle:vertical:hover {
-    background-color: #FF6B6B;
+    background-color: #5470FF;
 }
 QSlider::sub-page:vertical {
-    background-color: #E5484D;
+    background-color: #3D5AFE;
     border-radius: 3px;
 }
 QSlider::add-page:vertical {
@@ -400,8 +403,15 @@ QSlider::add-page:vertical {
 
 PLAYER_WINDOW_STYLE = """
 QWidget {
-    background-color: #000000;
     color: #F5F6FA;
+}
+
+QWidget#playerWindowRoot {
+    background-color: #000000;
+}
+
+QWidget#playerVideoPage {
+    background-color: #000000;
 }
 
 QLabel#playerTimer {

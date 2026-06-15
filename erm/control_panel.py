@@ -522,6 +522,8 @@ class ControlPanelWindow(QMainWindow):
         self._refresh_audio_mixer()
         self._refresh_video_strips()
         self._apply_audio_settings()
+        if self.player_window is not None:
+            self.player_window.set_background_image(self.room.background_image_path)
         self._update_bottom_bar()
 
     def _refresh_briefing_buttons(self) -> None:
@@ -767,7 +769,7 @@ class ControlPanelWindow(QMainWindow):
             self._sync_player_clue_states()
             session = database.get_session(self.room_id)
             self.player_window.set_time(session.remaining_seconds)
-            self.player_window.set_music(self.audio_settings.game_music_path)
+            self.player_window.set_background_image(self.room.background_image_path)
             self._apply_audio_settings()
             if session.status == "running":
                 self.player_window.play_music()
@@ -843,6 +845,7 @@ class ControlPanelWindow(QMainWindow):
         if self.player_window is None:
             return
         settings = self.audio_settings
+        self.player_window.set_music(settings.game_music_path)
         music_volume = audio.effective_volume(
             settings.game_music_volume,
             settings.game_music_muted,

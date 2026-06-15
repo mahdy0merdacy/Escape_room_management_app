@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 )
 
 from erm import database
-from erm.constants import AUDIO_FILE_FILTER, RATING_MAX, VIDEO_FILE_FILTER
+from erm.constants import AUDIO_FILE_FILTER, IMAGE_FILE_FILTER, RATING_MAX, VIDEO_FILE_FILTER
 from erm.widgets.rating import RatingDots
 
 
@@ -371,6 +371,23 @@ class RoomEditorDialog(QDialog):
 
         layout.addWidget(video_group)
 
+        player_window_group = QGroupBox("Player Window")
+        player_window_layout = QVBoxLayout(player_window_group)
+
+        background_row = QHBoxLayout()
+        background_row.addWidget(QLabel("Background image:"))
+        self.background_image_label = QLabel("(none)")
+        background_row.addWidget(self.background_image_label, stretch=1)
+        background_browse = QPushButton("Browse...")
+        background_browse.clicked.connect(self._browse_background_image)
+        background_row.addWidget(background_browse)
+        background_clear = QPushButton("Clear")
+        background_clear.clicked.connect(self._clear_background_image)
+        background_row.addWidget(background_clear)
+        player_window_layout.addLayout(background_row)
+
+        layout.addWidget(player_window_group)
+
         audio_group = QGroupBox("Audio")
         audio_layout = QVBoxLayout(audio_group)
 
@@ -486,6 +503,8 @@ class RoomEditorDialog(QDialog):
         self.intro_fr_label.setToolTip(room.intro_video_path_fr or "")
         self.ending_label.setText(_video_label_text(room.ending_video_path))
         self.ending_label.setToolTip(room.ending_video_path or "")
+        self.background_image_label.setText(_video_label_text(room.background_image_path))
+        self.background_image_label.setToolTip(room.background_image_path or "")
         audio_settings = database.get_audio_settings(self.room_id)
         self.alert_sound_label.setText(_video_label_text(audio_settings.alert_path))
         self.alert_sound_label.setToolTip(audio_settings.alert_path or "")
@@ -549,6 +568,20 @@ class RoomEditorDialog(QDialog):
         database.update_room(self.room_id, ending_video_path=None)
         self.ending_label.setText("(none)")
         self.ending_label.setToolTip("")
+
+    def _browse_background_image(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select Background Image", "", IMAGE_FILE_FILTER
+        )
+        if path:
+            database.update_room(self.room_id, background_image_path=path)
+            self.background_image_label.setText(_video_label_text(path))
+            self.background_image_label.setToolTip(path)
+
+    def _clear_background_image(self) -> None:
+        database.update_room(self.room_id, background_image_path=None)
+        self.background_image_label.setText("(none)")
+        self.background_image_label.setToolTip("")
 
     # ------------------------------------------------------------------
     # Audio

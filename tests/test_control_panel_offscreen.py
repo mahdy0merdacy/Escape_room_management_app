@@ -15,6 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
@@ -57,6 +58,11 @@ def main():
         clue_a = database.add_clue(room_id, "Clue A")
         database.add_clue(room_id, "Clue B")
 
+        # A real audio file so the background music actually transitions to
+        # PlayingState (not just a volume-fade target).
+        music_path = str(Path(__file__).resolve().parent.parent / "assets" / "sounds" / "alert.wav")
+        database.update_audio_settings(room_id, game_music_path=music_path)
+
         panel = ControlPanelWindow(room_id)
 
         # Audio Mixer tab: default channel strips and page switching
@@ -71,7 +77,7 @@ def main():
             # the track and rises as you drag up.
             assert strip.slider.invertedAppearance() is True
         assert panel.audio_strips["alert"].status_label.text() == "No Status"
-        assert panel.audio_strips["game_music"].status_label.text() == "No Status"
+        assert panel.audio_strips["game_music"].status_label.text() == "Ready to Play"
         assert panel.audio_strips["video"].status_label.text() == "No Status"
         assert panel.audio_strips["master"].status_label.text() == "Master"
 
@@ -188,17 +194,23 @@ def main():
 
         base_font_px = player.message_label.font().pixelSize()
 
+        def _max_message_width() -> int:
+            view_left, _top, view_right, _bottom = player.message_view.layout().getContentsMargins()
+            return max(320, player._center_container.width() - view_left - view_right)
+
         # The message box hugs short text instead of stretching full-width...
         player.show_message("Hi")
         QApplication.processEvents()
-        max_width = max(320, int(player.width() * 0.9))
+        max_width = _max_message_width()
         short_size = player.message_label.size()
         assert short_size.width() < max_width
         assert player.message_label.font().pixelSize() == base_font_px
 
-        # ...but long messages wrap and grow taller to fit within ~90% of
-        # the window's width, without their text being clipped vertically.
+        # ...but long messages wrap and grow taller to fit within the
+        # available center area, without their text being clipped vertically,
+        # and without growing the window itself.
         long_text = "This message is intentionally long. " * 5
+        window_size_before = player.size()
         player.show_message(long_text)
         QApplication.processEvents()
         long_size = player.message_label.size()
@@ -206,11 +218,19 @@ def main():
         assert long_size.height() > short_size.height()
         max_height = max(160, player._center_container.height())
         assert long_size.height() <= max_height
+        assert player.size() == window_size_before
+
+        # The compact timer badge stays within the window bounds, anchored
+        # to the top-right corner (not pushed off-screen).
+        badge_pos = player.compact_timer_label.pos()
+        badge_size = player.compact_timer_label.size()
+        assert badge_pos.x() + badge_size.width() <= player.width()
+        assert badge_pos.y() + badge_size.height() <= player.height()
 
         # Resizing the player window re-fits the message box to the new width.
         player.resize(1600, 900)
         QApplication.processEvents()
-        assert player.message_label.size().width() == max(320, int(player.width() * 0.9))
+        assert player.message_label.size().width() == _max_message_width()
 
         # Extremely long messages shrink their font (instead of getting cut
         # off) so the whole message still fits within the available space.
@@ -273,6 +293,14 @@ def main():
         panel.hide_clue_icons_checkbox.setChecked(True)
         assert player.clue_strip.isHidden() is True
         panel.hide_clue_icons_checkbox.setChecked(False)
+        assert player.clue_strip.isHidden() is False
+
+        # The clue strip auto-hides while a video plays (so it doesn't show
+        # the player background behind the lock icons) and reappears once
+        # the video ends / show_timer() is called.
+        player.play_video("/tmp/does-not-exist-cp.mp4")
+        assert player.clue_strip.isHidden() is True
+        player.show_timer()
         assert player.clue_strip.isHidden() is False
 
         # Start game: idle -> running, resets progress (incl. the clue we just checked)
@@ -360,17 +388,59 @@ def main():
         assert database.get_session(room_id).status == "running"
         assert panel.timer.isActive()
         assert panel._video_finished_callback is None
+        # Background music must actually start playing, not just have its
+        # fade-target volume restored.
+        assert player.music_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
 
         # Manual start is preserved: if the game master starts the game
         # themselves before the briefing video ends, the auto-start logic
         # must not undo it (e.g. by pausing) when EndOfMedia later fires.
+        # It must also restore the background music volume, which
+        # play_video() fades to 0 while the briefing plays.
         panel._start_fresh_session(status="idle")
+        assert player.music_player.playbackState() != QMediaPlayer.PlaybackState.PlayingState
         panel._on_play_briefing_video_en()
+        QTest.qWait(MUSIC_FADE_WAIT_MS)
+        assert player.music_audio_output.volume() == 0.0
         panel._on_start_pause()
         assert database.get_session(room_id).status == "running"
+        assert player.music_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+        QTest.qWait(MUSIC_FADE_WAIT_MS)
+        assert abs(player.music_audio_output.volume() - 1.0) < 1e-6
         player._on_media_status_changed(QMediaPlayer.MediaStatus.EndOfMedia)
         assert database.get_session(room_id).status == "running"
         assert panel.timer.isActive()
+        assert player.music_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
+        assert abs(player.music_audio_output.volume() - 1.0) < 1e-6
+
+        # Player window background image: set via the room, applied to the
+        # already-open player window on refresh, scaled to cover the window,
+        # rescaled on resize, and cleared when removed.
+        bg_path = str(Path(tmp) / "bg.png")
+        bg_pixmap = QPixmap(200, 100)
+        bg_pixmap.fill(QColor("blue"))
+        bg_pixmap.save(bg_path, "PNG")
+
+        def _covers(pixmap_size, window_size) -> bool:
+            return pixmap_size.width() >= window_size.width() and pixmap_size.height() >= window_size.height()
+
+        assert player._background_label.pixmap() is None or player._background_label.pixmap().isNull()
+        database.update_room(room_id, background_image_path=bg_path)
+        panel.refresh_all()
+        QApplication.processEvents()
+        bg = player._background_label.pixmap()
+        assert bg is not None and not bg.isNull()
+        assert _covers(bg.size(), player.size())
+
+        player.resize(1024, 600)
+        QApplication.processEvents()
+        assert _covers(player._background_label.pixmap().size(), player.size())
+
+        database.update_room(room_id, background_image_path=None)
+        panel.refresh_all()
+        QApplication.processEvents()
+        cleared = player._background_label.pixmap()
+        assert cleared is None or cleared.isNull()
 
         # Bottom status bar reflects the recorded win/loss
         assert "Wins: 1" in panel.bottom_stats_label.text()

@@ -81,9 +81,13 @@ def test_migration(tmp: str) -> None:
     assert room.wins == 0
     assert room.losses == 0
     assert room.intro_video_path_fr is None
+    assert room.background_image_path is None
 
     database.update_room(room.id, intro_video_path_fr="/videos/intro_fr.mp4")
     assert database.get_room(room.id).intro_video_path_fr == "/videos/intro_fr.mp4"
+
+    database.update_room(room.id, background_image_path="/images/bg.png")
+    assert database.get_room(room.id).background_image_path == "/images/bg.png"
 
     obj_id = database.add_objective(room.id, "Legacy objective")
     objective = database.get_objective(obj_id)
@@ -116,15 +120,21 @@ def main():
         assert len(rooms) == 1 and rooms[0].name == "Pharaoh's Tomb"
         assert rooms[0].wins == 0 and rooms[0].losses == 0
         assert rooms[0].intro_video_path_fr is None
+        assert rooms[0].background_image_path is None
 
         database.update_room(
             room_id, name="Pharaoh's Tomb (Hard)", duration_seconds=3600,
             intro_video_path_fr="/videos/intro_fr.mp4",
+            background_image_path="/images/tomb_bg.png",
         )
         room = database.get_room(room_id)
         assert room.name == "Pharaoh's Tomb (Hard)"
         assert room.duration_seconds == 3600
         assert room.intro_video_path_fr == "/videos/intro_fr.mp4"
+        assert room.background_image_path == "/images/tomb_bg.png"
+
+        database.update_room(room_id, background_image_path=None)
+        assert database.get_room(room_id).background_image_path is None
 
         # Win/loss recording
         database.record_result(room_id, won=True)

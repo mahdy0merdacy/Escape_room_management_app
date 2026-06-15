@@ -5,10 +5,11 @@ Shows a big countdown timer by default. The game master can push a video
 video finishes it automatically returns to the timer.
 """
 
+from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QSize, QUrl, Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QFontMetrics
+from PyQt6.QtGui import QFont, QFontMetrics, QPixmap
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtWidgets import (
@@ -40,6 +41,7 @@ class PlayerWindow(QWidget):
     def __init__(self, room_name: str = "", parent=None):
         super().__init__(parent)
         title = f"Player Display - {room_name}" if room_name else "Player Display"
+        self.setObjectName("playerWindowRoot")
         self.setWindowTitle(title)
         self.setStyleSheet(PLAYER_WINDOW_STYLE)
         self.resize(960, 540)
@@ -48,6 +50,7 @@ class PlayerWindow(QWidget):
         self._music_path: Optional[str] = None
         self._message_padding_size: Optional[QSize] = None
         self._message_base_font: Optional[QFont] = None
+        self._background_pixmap: Optional[QPixmap] = None
 
         self._build_ui()
 
@@ -118,6 +121,7 @@ class PlayerWindow(QWidget):
 
         # --- Video page --------------------------------------------------
         self.video_page = QWidget()
+        self.video_page.setObjectName("playerVideoPage")
         video_layout = QVBoxLayout(self.video_page)
         video_layout.setContentsMargins(0, 0, 0, 0)
         self.video_widget = QVideoWidget()
@@ -138,6 +142,13 @@ class PlayerWindow(QWidget):
         self.clue_strip.hide()
         root.addWidget(self.clue_strip)
 
+        # --- Background image (sits behind everything else) -----------------
+        self._background_label = QLabel(self)
+        self._background_label.setObjectName("playerBackgroundImage")
+        self._background_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._background_label.setGeometry(self.rect())
+        self._background_label.lower()
+
         # --- Media player ---------------------------------------------------
         self.media_player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
@@ -150,6 +161,8 @@ class PlayerWindow(QWidget):
         self.music_audio_output = QAudioOutput(self)
         self.music_player.setAudioOutput(self.music_audio_output)
         self.music_player.setLoops(QMediaPlayer.Loops.Infinite)
+        self._music_should_play = False
+        self.music_player.mediaStatusChanged.connect(self._on_music_status_changed)
 
         self._music_target_volume = 1.0
         self._music_fade_animation = QPropertyAnimation(self.music_audio_output, b"volume", self)
@@ -187,29 +200,41 @@ class PlayerWindow(QWidget):
         self.time_up_label.show()
 
     def show_timer(self) -> None:
+        if self.stack.currentWidget() is self.video_page:
+            self._fade_music_to(self._music_target_volume)
         if self.media_player.playbackState() != QMediaPlayer.PlaybackState.StoppedState:
             self.media_player.stop()
         self.stack.setCurrentWidget(self.timer_page)
+        self._update_clue_strip_visibility()
 
     def play_video(self, path: str) -> None:
         self._fade_music_to(0.0)
         self.time_up_label.hide()
         self.stack.setCurrentWidget(self.video_page)
+        self._update_clue_strip_visibility()
         self.media_player.setSource(QUrl.fromLocalFile(path))
         self.media_player.play()
 
     def set_video_volume(self, volume: float) -> None:
         self.audio_output.setVolume(max(0.0, min(1.0, volume)))
 
+    def set_background_image(self, path: Optional[str]) -> None:
+        pixmap = None
+        if path and Path(path).exists():
+            loaded = QPixmap(path)
+            if not loaded.isNull():
+                pixmap = loaded
+        self._background_pixmap = pixmap
+        self._update_background_pixmap()
+
     def set_music(self, path: Optional[str]) -> None:
         if path == self._music_path:
             return
         self._music_path = path
-        was_playing = self.music_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState
         self.music_player.stop()
         if path:
             self.music_player.setSource(QUrl.fromLocalFile(path))
-            if was_playing:
+            if self._music_should_play:
                 self.music_player.play()
         else:
             self.music_player.setSource(QUrl())
@@ -220,19 +245,22 @@ class PlayerWindow(QWidget):
             self._fade_music_to(self._music_target_volume)
 
     def play_music(self) -> None:
+        self._music_should_play = True
         if self._music_path and self.music_player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
             self.music_player.play()
 
     def pause_music(self) -> None:
+        self._music_should_play = False
         self.music_player.pause()
 
     def stop_music(self) -> None:
+        self._music_should_play = False
         self.music_player.stop()
 
     def show_message(self, text: str) -> None:
         self.message_label.setText(text)
-        self._update_message_geometry()
         self.compact_timer_label.show()
+        self._update_message_geometry()
         self.center_stack.setCurrentWidget(self.message_view)
         self._animate_message(1.0)
 
@@ -251,15 +279,34 @@ class PlayerWindow(QWidget):
             icon = PlayerClueIcon()
             icon.setChecked(state)
             self.clue_strip_layout.addWidget(icon)
-        self.clue_strip.setVisible(bool(states) and not self._clue_icons_hidden)
+        self._update_clue_strip_visibility()
 
     def set_clue_icons_hidden(self, hidden: bool) -> None:
         self._clue_icons_hidden = hidden
-        self.clue_strip.setVisible(self.clue_strip_layout.count() > 0 and not hidden)
+        self._update_clue_strip_visibility()
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
+
+    def _update_clue_strip_visibility(self) -> None:
+        visible = (
+            self.clue_strip_layout.count() > 0
+            and not self._clue_icons_hidden
+            and self.stack.currentWidget() is not self.video_page
+        )
+        self.clue_strip.setVisible(visible)
+
+    def _update_background_pixmap(self) -> None:
+        if self._background_pixmap is None or self.size().isEmpty():
+            self._background_label.clear()
+            return
+        scaled = self._background_pixmap.scaled(
+            self.size(),
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self._background_label.setPixmap(scaled)
 
     def _fade_music_to(self, volume: float) -> None:
         self._music_fade_animation.stop()
@@ -288,7 +335,8 @@ class PlayerWindow(QWidget):
         base_font = self._message_base_font
         h_padding = self._message_padding_size.width()
         v_padding = self._message_padding_size.height() - QFontMetrics(base_font).height()
-        max_width = max(320, int(self.width() * 0.9))
+        view_left, _view_top, view_right, _view_bottom = self.message_view.layout().getContentsMargins()
+        max_width = max(320, self._center_container.width() - view_left - view_right)
         max_height = max(160, self._center_container.height())
 
         pixel_size = base_font.pixelSize()
@@ -337,8 +385,14 @@ class PlayerWindow(QWidget):
     def _on_media_status_changed(self, status: QMediaPlayer.MediaStatus) -> None:
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
             self.show_timer()
-            self._fade_music_to(self._music_target_volume)
             self.video_finished.emit()
+
+    def _on_music_status_changed(self, status: QMediaPlayer.MediaStatus) -> None:
+        # On some platforms play() called right after setSource() is a
+        # no-op until the media finishes loading - retry once it's ready.
+        if status in (QMediaPlayer.MediaStatus.LoadedMedia, QMediaPlayer.MediaStatus.BufferedMedia):
+            if self._music_should_play and self.music_player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
+                self.music_player.play()
 
     def toggle_fullscreen(self) -> None:
         if self.isFullScreen():
@@ -348,6 +402,8 @@ class PlayerWindow(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._background_label.setGeometry(self.rect())
+        self._update_background_pixmap()
         self._update_message_geometry()
 
     def keyPressEvent(self, event) -> None:

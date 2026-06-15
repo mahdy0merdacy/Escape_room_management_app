@@ -12,6 +12,7 @@ class Room:
     wins: int = 0
     losses: int = 0
     intro_video_path_fr: Optional[str] = None
+    background_image_path: Optional[str] = None
 
 
 @dataclass

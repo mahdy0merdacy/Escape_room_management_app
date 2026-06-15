@@ -144,6 +144,7 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         conn, "sessions", "time_adjusted_seconds", "time_adjusted_seconds INTEGER NOT NULL DEFAULT 0"
     )
     _ensure_column(conn, "rooms", "intro_video_path_fr", "intro_video_path_fr TEXT")
+    _ensure_column(conn, "rooms", "background_image_path", "background_image_path TEXT")
 
 
 def init_db() -> None:
@@ -167,6 +168,7 @@ def _row_to_room(row: sqlite3.Row) -> Room:
         wins=row["wins"],
         losses=row["losses"],
         intro_video_path_fr=row["intro_video_path_fr"],
+        background_image_path=row["background_image_path"],
     )
 
 
@@ -201,7 +203,14 @@ def create_room(
 def update_room(room_id: int, **fields) -> None:
     if not fields:
         return
-    allowed = {"name", "duration_seconds", "intro_video_path", "ending_video_path", "intro_video_path_fr"}
+    allowed = {
+        "name",
+        "duration_seconds",
+        "intro_video_path",
+        "ending_video_path",
+        "intro_video_path_fr",
+        "background_image_path",
+    }
     columns = [key for key in fields if key in allowed]
     if not columns:
         return
