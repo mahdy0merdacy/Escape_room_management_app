@@ -259,7 +259,7 @@ class PlayerWindow(QWidget):
         self.music_player.stop()
 
     def show_message(self, text: str) -> None:
-        self.message_label.setText(textwrap.fill(text, width=24))
+        self.message_label.setText(textwrap.fill(text, width=45))
         self.compact_timer_label.show()
         self._update_message_geometry()
         self.center_stack.setCurrentWidget(self.message_view)
@@ -337,8 +337,10 @@ class PlayerWindow(QWidget):
         h_padding = self._message_padding_size.width()
         v_padding = self._message_padding_size.height() - QFontMetrics(base_font).height()
         view_left, _view_top, view_right, _view_bottom = self.message_view.layout().getContentsMargins()
-        max_width = max(320, self._center_container.width() - view_left - view_right)
-        max_height = max(160, self._center_container.height())
+        container_w = self._center_container.width() or max(0, self.width() - 80)
+        container_h = self._center_container.height() or max(0, self.height() - 80)
+        max_width = max(320, container_w - view_left - view_right)
+        max_height = max(160, container_h)
 
         pixel_size = base_font.pixelSize()
         while True:
