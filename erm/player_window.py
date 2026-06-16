@@ -100,7 +100,7 @@ class PlayerWindow(QWidget):
         # Big centered message (shown while a message is active)
         self.message_view = QWidget()
         message_view_layout = QVBoxLayout(self.message_view)
-        message_view_layout.setContentsMargins(48, 0, 48, 0)
+        message_view_layout.setContentsMargins(0, 0, 0, 0)
         message_view_layout.addStretch(1)
         self.message_label = QLabel("")
         self.message_label.setObjectName("playerMessage")
@@ -259,7 +259,9 @@ class PlayerWindow(QWidget):
         self.music_player.stop()
 
     def show_message(self, text: str) -> None:
-        self.message_label.setText(textwrap.fill(text, width=45))
+        # Only break truly pathological strings (no spaces for 200+ chars).
+        # Normal word-wrapping is handled by Qt at the box's pixel width.
+        self.message_label.setText(textwrap.fill(text, width=200))
         self.compact_timer_label.show()
         self._update_message_geometry()
         self.center_stack.setCurrentWidget(self.message_view)
