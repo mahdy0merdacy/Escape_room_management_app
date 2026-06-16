@@ -4,8 +4,8 @@ timer and session controls, plus the player-facing display window."""
 from pathlib import Path
 from typing import Callable, Optional
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QGuiApplication
+from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QFontMetrics, QGuiApplication
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSpinBox,
     QStackedLayout,
+    QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
 )
@@ -34,6 +35,21 @@ from erm.theme import CONTROL_PANEL_STYLE
 from erm.widgets.channel_strip import AudioChannelStrip
 from erm.widgets.lock_button import ClueLockButton
 from erm.widgets.rating import RatingDots
+
+
+class _FeedDelegate(QStyledItemDelegate):
+    """Word-wrapping delegate for the message feed list."""
+    _V_PAD = 10
+
+    def sizeHint(self, option, index):
+        text = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        viewport = self.parent().viewport() if self.parent() else None
+        width = (viewport.width() - 8) if viewport else 200
+        fm = QFontMetrics(option.font)
+        rect = fm.boundingRect(
+            0, 0, max(1, width), 10_000, Qt.TextFlag.TextWordWrap, text
+        )
+        return QSize(width, rect.height() + self._V_PAD * 2)
 
 
 def _format_time(seconds: int) -> str:
@@ -255,6 +271,9 @@ class ControlPanelWindow(QMainWindow):
         content_layout.setContentsMargins(12, 12, 12, 12)
 
         self.feed_list = QListWidget()
+        self.feed_list.setWordWrap(True)
+        self.feed_list.setSpacing(4)
+        self.feed_list.setItemDelegate(_FeedDelegate(self.feed_list))
         content_layout.addWidget(self.feed_list, stretch=1)
 
         clear_button = QPushButton("Clear player window")

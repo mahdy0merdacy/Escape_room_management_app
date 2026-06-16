@@ -5,6 +5,7 @@ Shows a big countdown timer by default. The game master can push a video
 video finishes it automatically returns to the timer.
 """
 
+import textwrap
 from pathlib import Path
 from typing import Optional
 
@@ -258,7 +259,7 @@ class PlayerWindow(QWidget):
         self.music_player.stop()
 
     def show_message(self, text: str) -> None:
-        self.message_label.setText(text)
+        self.message_label.setText(textwrap.fill(text, width=35))
         self.compact_timer_label.show()
         self._update_message_geometry()
         self.center_stack.setCurrentWidget(self.message_view)
@@ -344,17 +345,18 @@ class PlayerWindow(QWidget):
             font = QFont(base_font)
             font.setPixelSize(pixel_size)
             fm = QFontMetrics(font)
-            line_height = fm.height() + v_padding
 
-            single_line_width = fm.horizontalAdvance(text) + h_padding
+            # Measure the widest explicit line (handles \n from textwrap.fill)
+            widest_line = max((fm.horizontalAdvance(ln) for ln in text.split("\n")), default=0)
+            single_line_width = widest_line + h_padding
             if single_line_width <= max_width:
-                width, height = single_line_width, line_height
+                width = single_line_width
             else:
                 width = max_width
-                text_rect = fm.boundingRect(
-                    0, 0, max(1, width - h_padding), 10_000, Qt.TextFlag.TextWordWrap, text
-                )
-                height = text_rect.height() + v_padding
+            text_rect = fm.boundingRect(
+                0, 0, max(1, width - h_padding), 10_000, Qt.TextFlag.TextWordWrap, text
+            )
+            height = text_rect.height() + v_padding
 
             if height <= max_height or pixel_size <= MESSAGE_MIN_FONT_PX:
                 break

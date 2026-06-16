@@ -214,7 +214,7 @@ def main():
         player.show_message(long_text)
         QApplication.processEvents()
         long_size = player.message_label.size()
-        assert long_size.width() == max_width
+        assert long_size.width() <= max_width
         assert long_size.height() > short_size.height()
         max_height = max(160, player._center_container.height())
         assert long_size.height() <= max_height
@@ -230,7 +230,7 @@ def main():
         # Resizing the player window re-fits the message box to the new width.
         player.resize(1600, 900)
         QApplication.processEvents()
-        assert player.message_label.size().width() == _max_message_width()
+        assert player.message_label.size().width() <= _max_message_width()
 
         # Extremely long messages shrink their font (instead of getting cut
         # off) so the whole message still fits within the available space.
