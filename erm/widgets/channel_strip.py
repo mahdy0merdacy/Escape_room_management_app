@@ -21,11 +21,11 @@ class AudioChannelStrip(QWidget):
         layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         layout.setSpacing(8)
 
-        name_label = QLabel(name)
-        name_label.setObjectName("audioChannelName")
-        name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        name_label.setWordWrap(True)
-        layout.addWidget(name_label)
+        self.name_label = QLabel(name)
+        self.name_label.setObjectName("audioChannelName")
+        self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.name_label.setWordWrap(True)
+        layout.addWidget(self.name_label)
 
         self.mute_button = QPushButton("\U0001F50A")
         self.mute_button.setCheckable(True)
@@ -79,3 +79,6 @@ class AudioChannelStrip(QWidget):
 
     def set_status(self, text: str) -> None:
         self.status_label.setText(text)
+
+    def set_name(self, name: str) -> None:
+        self.name_label.setText(name)

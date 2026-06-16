@@ -97,7 +97,19 @@ CREATE TABLE IF NOT EXISTS room_audio_settings (
     video_volume INTEGER NOT NULL DEFAULT 100,
     video_muted INTEGER NOT NULL DEFAULT 0,
     master_volume INTEGER NOT NULL DEFAULT 100,
-    master_muted INTEGER NOT NULL DEFAULT 0
+    master_muted INTEGER NOT NULL DEFAULT 0,
+    sfx1_volume INTEGER NOT NULL DEFAULT 100,
+    sfx1_muted INTEGER NOT NULL DEFAULT 0,
+    sfx1_path TEXT,
+    sfx1_name TEXT NOT NULL DEFAULT 'SFX 1',
+    sfx2_volume INTEGER NOT NULL DEFAULT 100,
+    sfx2_muted INTEGER NOT NULL DEFAULT 0,
+    sfx2_path TEXT,
+    sfx2_name TEXT NOT NULL DEFAULT 'SFX 2',
+    sfx3_volume INTEGER NOT NULL DEFAULT 100,
+    sfx3_muted INTEGER NOT NULL DEFAULT 0,
+    sfx3_path TEXT,
+    sfx3_name TEXT NOT NULL DEFAULT 'SFX 3'
 );
 
 CREATE TABLE IF NOT EXISTS room_video_volumes (
@@ -145,6 +157,11 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     )
     _ensure_column(conn, "rooms", "intro_video_path_fr", "intro_video_path_fr TEXT")
     _ensure_column(conn, "rooms", "background_image_path", "background_image_path TEXT")
+    for n in (1, 2, 3):
+        _ensure_column(conn, "room_audio_settings", f"sfx{n}_volume", f"sfx{n}_volume INTEGER NOT NULL DEFAULT 100")
+        _ensure_column(conn, "room_audio_settings", f"sfx{n}_muted", f"sfx{n}_muted INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "room_audio_settings", f"sfx{n}_path", f"sfx{n}_path TEXT")
+        _ensure_column(conn, "room_audio_settings", f"sfx{n}_name", f"sfx{n}_name TEXT NOT NULL DEFAULT 'SFX {n}'")
 
 
 def init_db() -> None:
@@ -698,6 +715,18 @@ def _row_to_audio_settings(row: sqlite3.Row) -> RoomAudioSettings:
         video_muted=bool(row["video_muted"]),
         master_volume=row["master_volume"],
         master_muted=bool(row["master_muted"]),
+        sfx1_volume=row["sfx1_volume"],
+        sfx1_muted=bool(row["sfx1_muted"]),
+        sfx1_path=row["sfx1_path"],
+        sfx1_name=row["sfx1_name"] or "SFX 1",
+        sfx2_volume=row["sfx2_volume"],
+        sfx2_muted=bool(row["sfx2_muted"]),
+        sfx2_path=row["sfx2_path"],
+        sfx2_name=row["sfx2_name"] or "SFX 2",
+        sfx3_volume=row["sfx3_volume"],
+        sfx3_muted=bool(row["sfx3_muted"]),
+        sfx3_path=row["sfx3_path"],
+        sfx3_name=row["sfx3_name"] or "SFX 3",
     )
 
 
@@ -723,6 +752,9 @@ def update_audio_settings(room_id: int, **fields) -> None:
         "fail_volume", "fail_muted", "fail_path",
         "video_volume", "video_muted",
         "master_volume", "master_muted",
+        "sfx1_volume", "sfx1_muted", "sfx1_path", "sfx1_name",
+        "sfx2_volume", "sfx2_muted", "sfx2_path", "sfx2_name",
+        "sfx3_volume", "sfx3_muted", "sfx3_path", "sfx3_name",
     }
     columns = [key for key in fields if key in allowed]
     if not columns:

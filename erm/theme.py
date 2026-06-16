@@ -414,15 +414,24 @@ QWidget#playerVideoPage {
     background-color: #000000;
 }
 
+QWidget#playerTimerPage,
+QWidget#playerStackContainer,
+QWidget#playerCenterContainer,
+QWidget#playerTimerView,
+QWidget#playerMessageView,
+QWidget#playerClueStrip {
+    background-color: transparent;
+}
+
 QLabel#playerTimer {
-    font-size: 120px;
+    font-size: 138px;
     font-weight: 700;
-    font-family: "DejaVu Sans Mono", "Consolas", monospace;
+    font-family: "Impact", "DejaVu Sans Mono", "Consolas", monospace;
     color: #F5F6FA;
 }
 
 QLabel#playerTimerCaption {
-    font-size: 28px;
+    font-size: 32px;
     font-weight: 500;
     letter-spacing: 4px;
     color: #9AA3B8;
@@ -431,15 +440,15 @@ QLabel#playerTimerCaption {
 QLabel#playerTimerCompact {
     background-color: rgba(40, 46, 64, 230);
     color: #F5F6FA;
-    font-size: 40px;
+    font-size: 46px;
     font-weight: 700;
-    font-family: "DejaVu Sans Mono", "Consolas", monospace;
+    font-family: "Impact", "DejaVu Sans Mono", "Consolas", monospace;
     padding: 10px 26px;
     border-radius: 14px;
 }
 
 QLabel#playerTimeUp {
-    font-size: 64px;
+    font-size: 74px;
     font-weight: 700;
     color: #FF5C5C;
 }
@@ -447,10 +456,10 @@ QLabel#playerTimeUp {
 QLabel#playerMessage {
     background-color: rgba(27, 34, 48, 235);
     color: #FFFFFF;
-    font-size: 44px;
+    font-size: 51px;
     font-weight: 700;
+    font-family: "Impact", "Arial Black", sans-serif;
     padding: 32px 44px;
     border-radius: 20px;
-    border: 3px solid #E5484D;
 }
 """

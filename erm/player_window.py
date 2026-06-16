@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QSize, QUrl, Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QFontMetrics, QPixmap
+from PyQt6.QtGui import QFont, QFontDatabase, QFontMetrics, QPixmap
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtWidgets import (
@@ -26,6 +26,19 @@ from erm.theme import PLAYER_WINDOW_STYLE
 from erm.widgets.lock_button import PlayerClueIcon
 
 MESSAGE_FADE_MS = 350
+
+_IMPACT_LOADED = False
+
+
+def _load_impact_font() -> None:
+    """Load Impact from the bundled assets if present; falls back to system Impact."""
+    global _IMPACT_LOADED
+    if _IMPACT_LOADED:
+        return
+    font_path = Path(__file__).parent.parent / "assets" / "fonts" / "impact.ttf"
+    if font_path.exists():
+        QFontDatabase.addApplicationFont(str(font_path))
+    _IMPACT_LOADED = True
 MUSIC_FADE_MS = 600
 
 # The message box shrinks its font (down to this size) before it accepts
@@ -44,6 +57,7 @@ class PlayerWindow(QWidget):
         title = f"Player Display - {room_name}" if room_name else "Player Display"
         self.setObjectName("playerWindowRoot")
         self.setWindowTitle(title)
+        _load_impact_font()
         self.setStyleSheet(PLAYER_WINDOW_STYLE)
         self.resize(960, 540)
 
@@ -64,6 +78,7 @@ class PlayerWindow(QWidget):
 
         # --- Timer page -----------------------------------------------
         self.timer_page = QWidget()
+        self.timer_page.setObjectName("playerTimerPage")
         page_layout = QVBoxLayout(self.timer_page)
         page_layout.setContentsMargins(40, 32, 40, 32)
 
@@ -80,6 +95,7 @@ class PlayerWindow(QWidget):
 
         # Big centered timer + caption (default/idle view)
         self.timer_view = QWidget()
+        self.timer_view.setObjectName("playerTimerView")
         timer_view_layout = QVBoxLayout(self.timer_view)
         timer_view_layout.addStretch(1)
         self.timer_caption_label = QLabel("Time Remaining")
@@ -99,6 +115,7 @@ class PlayerWindow(QWidget):
 
         # Big centered message (shown while a message is active)
         self.message_view = QWidget()
+        self.message_view.setObjectName("playerMessageView")
         message_view_layout = QVBoxLayout(self.message_view)
         message_view_layout.setContentsMargins(0, 0, 0, 0)
         message_view_layout.addStretch(1)
@@ -116,6 +133,7 @@ class PlayerWindow(QWidget):
         self.center_stack.addWidget(self.message_view)
 
         center_container = QWidget()
+        center_container.setObjectName("playerCenterContainer")
         center_container.setLayout(self.center_stack)
         page_layout.addWidget(center_container, stretch=1)
         self._center_container = center_container
@@ -132,11 +150,13 @@ class PlayerWindow(QWidget):
         self.stack.addWidget(self.video_page)
 
         stack_container = QWidget()
+        stack_container.setObjectName("playerStackContainer")
         stack_container.setLayout(self.stack)
         root.addWidget(stack_container, stretch=1)
 
         # --- Clue tracker strip --------------------------------------------
         self.clue_strip = QWidget()
+        self.clue_strip.setObjectName("playerClueStrip")
         self.clue_strip_layout = QHBoxLayout(self.clue_strip)
         self.clue_strip_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.clue_strip_layout.setSpacing(24)
@@ -261,9 +281,43 @@ class PlayerWindow(QWidget):
     def show_message(self, text: str) -> None:
         # Only break truly pathological strings (no spaces for 200+ chars).
         # Normal word-wrapping is handled by Qt at the box's pixel width.
+        if self.message_label.styleSheet():
+            # Restore global CSS after a show_auto_message changed the inline style,
+            # and clear the fixed-size constraint it set so sizeHint is unbiased.
+            self.message_label.setStyleSheet("")
+            self.message_label.setMinimumSize(0, 0)
+            self.message_label.setMaximumSize(16777215, 16777215)
+            self._message_base_font = None
+            self._message_padding_size = None
         self.message_label.setText(textwrap.fill(text, width=200))
         self.compact_timer_label.show()
         self._update_message_geometry()
+        self.center_stack.setCurrentWidget(self.message_view)
+        self._animate_message(1.0)
+
+    def show_auto_message(self, text: str, color: str = "#FFFFFF") -> None:
+        """Large borderless Impact message for game events (Game Over, You Escaped).
+        Sizes itself via QFontMetrics so it never disturbs the normal message cache."""
+        self.message_label.setStyleSheet(
+            f"QLabel#playerMessage {{"
+            f" font-family: 'Impact', 'Arial Black', sans-serif;"
+            f" font-size: 150px;"
+            f" font-weight: 900;"
+            f" color: {color};"
+            f" background: transparent;"
+            f" border: none;"
+            f" padding: 0px;"
+            f"}}"
+        )
+        self.message_label.setText(text)
+        fm = QFontMetrics(self.message_label.font())
+        container_w = self._center_container.width() or max(0, self.width() - 80)
+        max_w = max(400, container_w - 40)
+        text_w = fm.horizontalAdvance(text)
+        width = min(text_w, max_w)
+        rect = fm.boundingRect(0, 0, max(1, width), 10_000, Qt.TextFlag.TextWordWrap, text)
+        self.message_label.setFixedSize(width, rect.height())
+        self.compact_timer_label.show()
         self.center_stack.setCurrentWidget(self.message_view)
         self._animate_message(1.0)
 
@@ -301,8 +355,12 @@ class PlayerWindow(QWidget):
         self.clue_strip.setVisible(visible)
 
     def _update_background_pixmap(self) -> None:
-        if self._background_pixmap is None or self.size().isEmpty():
-            self._background_label.clear()
+        if self.size().isEmpty():
+            return
+        if self._background_pixmap is None:
+            black = QPixmap(self.size())
+            black.fill(Qt.GlobalColor.black)
+            self._background_label.setPixmap(black)
             return
         scaled = self._background_pixmap.scaled(
             self.size(),

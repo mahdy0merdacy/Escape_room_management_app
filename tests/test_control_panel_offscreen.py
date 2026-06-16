@@ -424,7 +424,9 @@ def main():
         def _covers(pixmap_size, window_size) -> bool:
             return pixmap_size.width() >= window_size.width() and pixmap_size.height() >= window_size.height()
 
-        assert player._background_label.pixmap() is None or player._background_label.pixmap().isNull()
+        # No image configured: background label now shows a solid black fallback pixmap
+        px = player._background_label.pixmap()
+        assert px is not None and not px.isNull()
         database.update_room(room_id, background_image_path=bg_path)
         panel.refresh_all()
         QApplication.processEvents()
@@ -439,8 +441,9 @@ def main():
         database.update_room(room_id, background_image_path=None)
         panel.refresh_all()
         QApplication.processEvents()
+        # After clearing the image, background label reverts to the black fallback pixmap
         cleared = player._background_label.pixmap()
-        assert cleared is None or cleared.isNull()
+        assert cleared is not None and not cleared.isNull()
 
         # Bottom status bar reflects the recorded win/loss
         assert "Wins: 1" in panel.bottom_stats_label.text()

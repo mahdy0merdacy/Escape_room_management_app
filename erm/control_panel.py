@@ -10,8 +10,12 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
     QCheckBox,
+    QDialog,
+    QFileDialog,
     QFrame,
+    QMenu,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -30,7 +34,7 @@ from PyQt6.QtWidgets import (
 from erm import audio, database
 from erm.constants import APP_VERSION
 from erm.player_window import PlayerWindow
-from erm.room_editor import RoomEditorDialog
+from erm.room_editor import HintEditorDialog, RoomEditorDialog
 from erm.theme import CONTROL_PANEL_STYLE
 from erm.widgets.channel_strip import AudioChannelStrip
 from erm.widgets.lock_button import ClueLockButton
@@ -202,6 +206,10 @@ class ControlPanelWindow(QMainWindow):
         self.objectives_list.currentItemChanged.connect(lambda *_: self._refresh_detail())
         layout.addWidget(self.objectives_list)
 
+        add_obj_btn = QPushButton("+ Add Objective")
+        add_obj_btn.clicked.connect(self._on_quick_add_objective)
+        layout.addWidget(add_obj_btn)
+
         return panel
 
     def _build_detail_column(self) -> QWidget:
@@ -252,6 +260,10 @@ class ControlPanelWindow(QMainWindow):
         self.clues_detail_list.itemClicked.connect(self._on_clue_card_clicked)
         content_layout.addWidget(self.clues_detail_list, stretch=1)
 
+        self.add_clue_btn = QPushButton("+ Add Clue")
+        self.add_clue_btn.clicked.connect(self._on_quick_add_clue)
+        content_layout.addWidget(self.add_clue_btn)
+
         layout.addWidget(content, stretch=1)
         return panel
 
@@ -297,6 +309,18 @@ class ControlPanelWindow(QMainWindow):
 
         content_layout.addLayout(send_row)
 
+        sfx_row = QHBoxLayout()
+        sfx_row.setSpacing(6)
+        self._sfx_buttons: list[QPushButton] = []
+        for n in (1, 2, 3):
+            btn = QPushButton(f"SFX {n}")
+            btn.clicked.connect(lambda _, i=n: self._on_play_sfx(i))
+            btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            btn.customContextMenuRequested.connect(lambda pos, i=n, b=btn: self._on_sfx_context_menu(i, b))
+            self._sfx_buttons.append(btn)
+            sfx_row.addWidget(btn)
+        content_layout.addLayout(sfx_row)
+
         layout.addWidget(content, stretch=1)
         return panel
 
@@ -338,6 +362,28 @@ class ControlPanelWindow(QMainWindow):
             strips_row.addWidget(strip)
         strips_row.addStretch(1)
         content_layout.addLayout(strips_row)
+
+        sfx_header = QLabel("SFX / Jumpscares")
+        sfx_header.setObjectName("sectionHeader")
+        content_layout.addWidget(sfx_header)
+
+        sfx_strips_row = QHBoxLayout()
+        sfx_strips_row.setSpacing(24)
+        self.sfx_strips: dict[str, AudioChannelStrip] = {}
+        for n in (1, 2, 3):
+            key = f"sfx{n}"
+            strip = AudioChannelStrip(f"SFX {n}", show_preview=True)
+            strip.volume_changed.connect(
+                lambda value, k=key: self._on_audio_volume_changed(k, value)
+            )
+            strip.mute_toggled.connect(
+                lambda checked, k=key: self._on_audio_mute_toggled(k, checked)
+            )
+            strip.preview_clicked.connect(lambda k=key: self._on_sfx_preview(k))
+            self.sfx_strips[key] = strip
+            sfx_strips_row.addWidget(strip)
+        sfx_strips_row.addStretch(1)
+        content_layout.addLayout(sfx_strips_row)
 
         videos_header = QLabel("Videos")
         videos_header.setObjectName("sectionHeader")
@@ -611,9 +657,7 @@ class ControlPanelWindow(QMainWindow):
         self.objectives_list.clear()
         self.objectives = database.list_objectives(self.room_id)
         if not self.objectives:
-            placeholder = QListWidgetItem(
-                "No objectives yet.\nClick ✏ Edit Objectives & Clues above to add one."
-            )
+            placeholder = QListWidgetItem("No objectives yet.\nUse + Add Objective below.")
             placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
             self.objectives_list.addItem(placeholder)
             self._refresh_detail()
@@ -792,19 +836,26 @@ class ControlPanelWindow(QMainWindow):
             self._apply_audio_settings()
             if session.status == "running":
                 self.player_window.play_music()
-
-            secondary_screen = self._secondary_screen()
-            if secondary_screen is not None:
-                self.player_window.move(secondary_screen.geometry().topLeft())
-                self.player_window.showFullScreen()
         self.player_window.show()
         self.player_window.raise_()
         return self.player_window
 
+    def _send_to_secondary_screen(self) -> None:
+        """Move the player window to the secondary monitor and fullscreen it.
+        Called every time the game master clicks 'Open Player Window' so the
+        window is always restored to the correct screen even if it was
+        accidentally moved or un-fullscreened."""
+        secondary = self._secondary_screen()
+        if secondary is None:
+            return
+        player = self._ensure_player_window()
+        if player.isFullScreen():
+            player.showNormal()
+        player.move(secondary.geometry().topLeft())
+        player.showFullScreen()
+
     def _secondary_screen(self):
-        """Return a screen other than the one this control panel is on, if
-        a second display is attached, so the player window can be opened
-        there directly in fullscreen."""
+        """Return a screen other than the one this control panel is on."""
         current_screen = self.screen()
         for screen in QGuiApplication.screens():
             if screen is not current_screen:
@@ -825,6 +876,7 @@ class ControlPanelWindow(QMainWindow):
             callback()
 
     def _on_open_player_window(self) -> None:
+        self._send_to_secondary_screen()
         self._ensure_player_window()
 
     def _on_toggle_player_fullscreen(self) -> None:
@@ -859,6 +911,16 @@ class ControlPanelWindow(QMainWindow):
             self.audio_strips[channel].set_status("Ready to Play" if path else "No Status")
         self.audio_strips["video"].set_status("No Status")
         self.audio_strips["master"].set_status("Master")
+        for n in (1, 2, 3):
+            key = f"sfx{n}"
+            strip = self.sfx_strips[key]
+            strip.set_volume(getattr(settings, f"{key}_volume"))
+            strip.set_muted(getattr(settings, f"{key}_muted"))
+            name = getattr(settings, f"{key}_name")
+            path = getattr(settings, f"{key}_path")
+            strip.set_name(name)
+            strip.set_status("Ready to Play" if path else "No file")
+            self._sfx_buttons[n - 1].setText(name)
 
     def _apply_audio_settings(self) -> None:
         if self.player_window is None:
@@ -928,25 +990,74 @@ class ControlPanelWindow(QMainWindow):
         else:
             audio.play_alert(None, volume)
 
+    def _on_play_sfx(self, n: int) -> None:
+        settings = self.audio_settings
+        path = getattr(settings, f"sfx{n}_path")
+        if not path:
+            return
+        volume = audio.effective_volume(
+            getattr(settings, f"sfx{n}_volume"),
+            getattr(settings, f"sfx{n}_muted"),
+            settings.master_volume,
+            settings.master_muted,
+        )
+        audio.play_file(path, volume)
+
+    def _on_sfx_preview(self, key: str) -> None:
+        n = int(key[-1])
+        self._on_play_sfx(n)
+
+    def _on_sfx_context_menu(self, n: int, btn: QPushButton) -> None:
+        menu = QMenu(self)
+        rename_action = menu.addAction("Rename...")
+        browse_action = menu.addAction("Browse audio file...")
+        clear_action = menu.addAction("Clear audio file")
+        action = menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+        if action == rename_action:
+            name, ok = QInputDialog.getText(
+                self, "Rename SFX", "Button label:", text=getattr(self.audio_settings, f"sfx{n}_name")
+            )
+            if ok and name.strip():
+                database.update_audio_settings(self.room_id, **{f"sfx{n}_name": name.strip()})
+                self.audio_settings = database.get_audio_settings(self.room_id)
+                self._refresh_audio_mixer()
+        elif action == browse_action:
+            path, _ = QFileDialog.getOpenFileName(
+                self, "Select Audio File", "",
+                "Audio Files (*.mp3 *.wav *.ogg *.flac *.aac *.m4a);;All Files (*)"
+            )
+            if path:
+                database.update_audio_settings(self.room_id, **{f"sfx{n}_path": path})
+                self.audio_settings = database.get_audio_settings(self.room_id)
+                self._refresh_audio_mixer()
+        elif action == clear_action:
+            database.update_audio_settings(self.room_id, **{f"sfx{n}_path": None})
+            self.audio_settings = database.get_audio_settings(self.room_id)
+            self._refresh_audio_mixer()
+
     # ------------------------------------------------------------------
     # Per-video volume sub-mixer
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _shorten(text: str, max_len: int = 14) -> str:
+        return text if len(text) <= max_len else text[:max_len - 1] + "…"
 
     def _list_room_videos(self) -> list[tuple[str, str]]:
         videos: list[tuple[str, str]] = []
         room = self.room
         if room.intro_video_path:
-            videos.append(("Briefing (EN)", room.intro_video_path))
+            videos.append(("Briefing EN", room.intro_video_path))
         if room.intro_video_path_fr:
-            videos.append(("Briefing (FR)", room.intro_video_path_fr))
+            videos.append(("Briefing FR", room.intro_video_path_fr))
         if room.ending_video_path:
             videos.append(("Ending", room.ending_video_path))
         for objective in database.list_objectives(self.room_id):
             if objective.checkpoint_video_path:
-                videos.append((f"Checkpoint: {objective.title}", objective.checkpoint_video_path))
+                videos.append((self._shorten(objective.title), objective.checkpoint_video_path))
             for hint in database.list_hints(objective.id):
                 if hint.video_path:
-                    videos.append((f"Hint: {hint.text}", hint.video_path))
+                    videos.append((self._shorten(hint.text), hint.video_path))
         return videos
 
     def _refresh_video_strips(self) -> None:
@@ -1069,6 +1180,7 @@ class ControlPanelWindow(QMainWindow):
             database.save_session(self.room_id, "completed", 0)
             if self.player_window is not None:
                 self.player_window.show_time_up()
+                self.player_window.show_auto_message("GAME OVER", color="#FF3B3B")
             self._play_fail_sound()
             self.refresh_all()
         else:
@@ -1106,6 +1218,8 @@ class ControlPanelWindow(QMainWindow):
         database.record_result(self.room_id, won=True)
         database.save_session(self.room_id, "completed", session.remaining_seconds)
         self._play_success_sound()
+        player = self._ensure_player_window()
+        player.show_auto_message("YOU ESCAPED!", color="#F5C518")
         if self.room.ending_video_path:
             self._play_video(self.room.ending_video_path)
         self.refresh_all()
@@ -1124,6 +1238,26 @@ class ControlPanelWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Room editor
     # ------------------------------------------------------------------
+
+    def _on_quick_add_objective(self) -> None:
+        title, ok = QInputDialog.getText(self, "Add Objective", "Objective title:")
+        if ok and title.strip():
+            new_id = database.add_objective(self.room_id, title.strip())
+            self._refresh_objectives(select_id=new_id)
+            self._refresh_stats()
+
+    def _on_quick_add_clue(self) -> None:
+        objective = self._selected_objective()
+        if objective is None:
+            QMessageBox.information(self, "No Objective Selected", "Select an objective first.")
+            return
+        dialog = HintEditorDialog(parent=self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            text, rating, video_path = dialog.values()
+            if text:
+                database.add_hint(objective.id, text, rating=rating, video_path=video_path)
+                self._refresh_detail()
+                self._refresh_clue_buttons()
 
     def _open_room_editor(self) -> None:
         dialog = RoomEditorDialog(self.room_id, parent=self)

@@ -54,7 +54,7 @@ class PlayerClueIcon(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(56, 56)
+        self.setFixedSize(112, 112)
         self._checked = False
 
     def isChecked(self) -> bool:

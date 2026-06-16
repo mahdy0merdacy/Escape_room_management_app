@@ -75,3 +75,15 @@ class RoomAudioSettings:
     video_muted: bool = False
     master_volume: int = 100
     master_muted: bool = False
+    sfx1_volume: int = 100
+    sfx1_muted: bool = False
+    sfx1_path: Optional[str] = None
+    sfx1_name: str = "SFX 1"
+    sfx2_volume: int = 100
+    sfx2_muted: bool = False
+    sfx2_path: Optional[str] = None
+    sfx2_name: str = "SFX 2"
+    sfx3_volume: int = 100
+    sfx3_muted: bool = False
+    sfx3_path: Optional[str] = None
+    sfx3_name: str = "SFX 3"
