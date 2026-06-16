@@ -259,7 +259,7 @@ class PlayerWindow(QWidget):
         self.music_player.stop()
 
     def show_message(self, text: str) -> None:
-        self.message_label.setText(textwrap.fill(text, width=35))
+        self.message_label.setText(textwrap.fill(text, width=24))
         self.compact_timer_label.show()
         self._update_message_geometry()
         self.center_stack.setCurrentWidget(self.message_view)
