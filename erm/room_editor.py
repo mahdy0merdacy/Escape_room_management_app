@@ -234,7 +234,7 @@ class ObjectiveEditorDialog(QDialog):
         item_layout.addWidget(text_label, stretch=1)
         item_layout.addWidget(RatingDots(hint.rating))
         if hint.video_path:
-            video_label = QLabel("\U0001F3AC")
+            video_label = QLabel("[vid]")
             video_label.setToolTip(hint.video_path)
             item_layout.addWidget(video_label)
         return widget

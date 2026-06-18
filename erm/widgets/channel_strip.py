@@ -27,9 +27,9 @@ class AudioChannelStrip(QWidget):
         self.name_label.setWordWrap(True)
         layout.addWidget(self.name_label)
 
-        self.mute_button = QPushButton("\U0001F50A")
+        self.mute_button = QPushButton("On")
         self.mute_button.setCheckable(True)
-        self.mute_button.setFixedWidth(40)
+        self.mute_button.setFixedWidth(52)
         self.mute_button.toggled.connect(self._on_mute_toggled)
         layout.addWidget(self.mute_button, alignment=Qt.AlignmentFlag.AlignHCenter)
 
@@ -48,7 +48,6 @@ class AudioChannelStrip(QWidget):
         self.slider = QSlider(Qt.Orientation.Vertical)
         self.slider.setRange(0, 100)
         self.slider.setValue(100)
-        self.slider.setInvertedAppearance(True)
         self.slider.setMinimumHeight(140)
         self.slider.valueChanged.connect(self._on_slider_changed)
         layout.addWidget(self.slider, alignment=Qt.AlignmentFlag.AlignHCenter)
@@ -62,7 +61,7 @@ class AudioChannelStrip(QWidget):
         self.volume_changed.emit(value)
 
     def _on_mute_toggled(self, checked: bool) -> None:
-        self.mute_button.setText("\U0001F507" if checked else "\U0001F50A")
+        self.mute_button.setText("Off" if checked else "On")
         self.mute_toggled.emit(checked)
 
     def set_volume(self, value: int) -> None:
@@ -74,7 +73,7 @@ class AudioChannelStrip(QWidget):
     def set_muted(self, muted: bool) -> None:
         self.mute_button.blockSignals(True)
         self.mute_button.setChecked(muted)
-        self.mute_button.setText("\U0001F507" if muted else "\U0001F50A")
+        self.mute_button.setText("Off" if muted else "On")
         self.mute_button.blockSignals(False)
 
     def set_status(self, text: str) -> None:

@@ -278,6 +278,14 @@ class PlayerWindow(QWidget):
         self._music_should_play = False
         self.music_player.stop()
 
+    def duck_music(self, factor: float = 0.25) -> None:
+        """Temporarily lower music to `factor` × target volume for SFX ducking."""
+        self._fade_music_to(self._music_target_volume * factor)
+
+    def unduck_music(self) -> None:
+        """Restore music to its target volume after ducking."""
+        self._fade_music_to(self._music_target_volume)
+
     def show_message(self, text: str) -> None:
         # Only break truly pathological strings (no spaces for 200+ chars).
         # Normal word-wrapping is handled by Qt at the box's pixel width.

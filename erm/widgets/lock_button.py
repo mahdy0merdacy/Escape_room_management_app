@@ -13,15 +13,13 @@ from erm.theme import (
     PLAYER_LOCK_USED_COLOR,
 )
 
-OPEN_LOCK = "\U0001F513"
-CLOSED_LOCK = "\U0001F512"
-
 
 class ClueLockButton(QPushButton):
     """Checkable padlock button for the Control Panel's clue tracker.
 
     Checked = unlocked (open green padlock), unchecked = locked (closed
-    gray padlock).
+    gray padlock).  The icon is painted via QPainter so it renders on all
+    platforms without relying on emoji fonts.
     """
 
     def __init__(self, label: str = "", parent=None):
@@ -33,16 +31,41 @@ class ClueLockButton(QPushButton):
         self.toggled.connect(self._refresh_style)
 
     def _refresh_style(self) -> None:
-        if self.isChecked():
-            self.setText(OPEN_LOCK)
-            bg, fg = LOCK_UNLOCKED_BG, LOCK_UNLOCKED_FG
-        else:
-            self.setText(CLOSED_LOCK)
-            bg, fg = LOCK_LOCKED_BG, LOCK_LOCKED_FG
+        bg, fg = (LOCK_UNLOCKED_BG, LOCK_UNLOCKED_FG) if self.isChecked() else (LOCK_LOCKED_BG, LOCK_LOCKED_FG)
         self.setStyleSheet(
-            f"QPushButton {{ background-color: {bg}; color: {fg}; "
-            f"border-radius: 8px; font-size: 18px; }}"
+            f"QPushButton {{ background-color: {bg}; border-radius: 8px; }}"
         )
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = QColor(LOCK_UNLOCKED_FG if self.isChecked() else LOCK_LOCKED_FG)
+        w, h = self.width(), self.height()
+
+        pen = QPen(color)
+        pen.setWidthF(w * 0.12)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        if self.isChecked():
+            # Open lock: shackle swung up and to the right
+            shackle = QRectF(w * 0.36, h * 0.02, w * 0.48, h * 0.48)
+            painter.drawArc(shackle, 0, 200 * 16)
+        else:
+            # Closed lock: centered semicircle sitting on the body
+            shackle = QRectF(w * 0.24, h * 0.05, w * 0.48, h * 0.48)
+            painter.drawArc(shackle, 0, 180 * 16)
+
+        # Lock body
+        body = QRectF(w * 0.13, h * 0.44, w * 0.68, h * 0.44)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        painter.drawRoundedRect(body, w * 0.10, w * 0.10)
+        painter.end()
 
 
 class PlayerClueIcon(QWidget):

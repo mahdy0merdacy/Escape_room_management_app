@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFontMetrics, QGuiApplication
+from PyQt6.QtGui import QFontMetrics, QGuiApplication, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -88,6 +88,11 @@ class ControlPanelWindow(QMainWindow):
         self.timer.setInterval(1000)
         self.timer.timeout.connect(self._on_tick)
 
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setInterval(500)
+        self._preview_timer.timeout.connect(self._update_player_preview)
+        self._preview_timer.start()
+
         self._build_ui()
         self.refresh_all()
 
@@ -124,6 +129,9 @@ class ControlPanelWindow(QMainWindow):
         self.setCentralWidget(central)
         self.control_panel_tab.setChecked(True)
 
+        for btn in self.findChildren(QPushButton):
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
     def _build_session_page(self) -> QWidget:
         page = QWidget()
         layout = QHBoxLayout(page)
@@ -159,13 +167,13 @@ class ControlPanelWindow(QMainWindow):
         self.tab_group = QButtonGroup(self)
         self.tab_group.setExclusive(True)
 
-        self.control_panel_tab = QPushButton("⚡ Control Panel")
+        self.control_panel_tab = QPushButton("Control Panel")
         self.control_panel_tab.setObjectName("tabButton")
         self.control_panel_tab.setCheckable(True)
         self.tab_group.addButton(self.control_panel_tab, 0)
         layout.addWidget(self.control_panel_tab)
 
-        self.audio_mixer_tab = QPushButton("🎚 Audio Mixer")
+        self.audio_mixer_tab = QPushButton("Audio Mixer")
         self.audio_mixer_tab.setObjectName("tabButton")
         self.audio_mixer_tab.setCheckable(True)
         self.tab_group.addButton(self.audio_mixer_tab, 1)
@@ -179,7 +187,7 @@ class ControlPanelWindow(QMainWindow):
         layout.addWidget(self.room_name_label)
         layout.addStretch(1)
 
-        self.edit_room_button = QPushButton("✏ Edit Objectives & Clues")
+        self.edit_room_button = QPushButton("Edit Objectives & Clues")
         self.edit_room_button.clicked.connect(self._open_room_editor)
         layout.addWidget(self.edit_room_button)
 
@@ -204,6 +212,7 @@ class ControlPanelWindow(QMainWindow):
 
         self.objectives_list = QListWidget()
         self.objectives_list.currentItemChanged.connect(lambda *_: self._refresh_detail())
+        self.objectives_list.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(self.objectives_list)
 
         add_obj_btn = QPushButton("+ Add Objective")
@@ -258,6 +267,10 @@ class ControlPanelWindow(QMainWindow):
         self.clues_detail_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         self.clues_detail_list.model().rowsMoved.connect(self._on_hints_reordered)
         self.clues_detail_list.itemClicked.connect(self._on_clue_card_clicked)
+        self.clues_detail_list.itemDoubleClicked.connect(self._on_clue_card_double_clicked)
+        self.clues_detail_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.clues_detail_list.customContextMenuRequested.connect(self._on_clue_context_menu)
+        self.clues_detail_list.setCursor(Qt.CursorShape.PointingHandCursor)
         content_layout.addWidget(self.clues_detail_list, stretch=1)
 
         self.add_clue_btn = QPushButton("+ Add Clue")
@@ -314,6 +327,7 @@ class ControlPanelWindow(QMainWindow):
         self._sfx_buttons: list[QPushButton] = []
         for n in (1, 2, 3):
             btn = QPushButton(f"SFX {n}")
+            btn.setObjectName("sfxButton")
             btn.clicked.connect(lambda _, i=n: self._on_play_sfx(i))
             btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             btn.customContextMenuRequested.connect(lambda pos, i=n, b=btn: self._on_sfx_context_menu(i, b))
@@ -325,22 +339,32 @@ class ControlPanelWindow(QMainWindow):
         return panel
 
     def _build_audio_mixer_page(self) -> QWidget:
+        _STRIP_H = 295  # height reserved for one row of channel strips
+
         panel = QWidget()
         panel.setObjectName("columnPanel")
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        outer = QVBoxLayout(panel)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        header = QLabel("Audio")
+        header = QLabel("Audio Mixer")
         header.setObjectName("columnHeader")
-        layout.addWidget(header)
+        outer.addWidget(header)
 
-        content = QWidget()
-        content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(24, 24, 24, 24)
+        # Vertically scrollable wrapper so all three sections are reachable
+        page_scroll = QScrollArea()
+        page_scroll.setWidgetResizable(True)
+        page_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        page_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
-        strips_row = QHBoxLayout()
-        strips_row.setSpacing(24)
+        page_content = QWidget()
+        page_layout = QVBoxLayout(page_content)
+        page_layout.setContentsMargins(16, 16, 16, 16)
+        page_layout.setSpacing(16)
+        page_scroll.setWidget(page_content)
+
+        # ── Audio ──────────────────────────────────────────────────────────
+        audio_card, audio_row = self._make_mixer_card("Audio", _STRIP_H)
         self.audio_strips: dict[str, AudioChannelStrip] = {}
         for channel, label, show_preview in (
             ("alert", "Alert", True),
@@ -359,16 +383,12 @@ class ControlPanelWindow(QMainWindow):
             )
             strip.preview_clicked.connect(lambda ch=channel: self._on_audio_preview(ch))
             self.audio_strips[channel] = strip
-            strips_row.addWidget(strip)
-        strips_row.addStretch(1)
-        content_layout.addLayout(strips_row)
+            audio_row.addWidget(strip)
+        audio_row.addStretch(1)
+        page_layout.addWidget(audio_card)
 
-        sfx_header = QLabel("SFX / Jumpscares")
-        sfx_header.setObjectName("sectionHeader")
-        content_layout.addWidget(sfx_header)
-
-        sfx_strips_row = QHBoxLayout()
-        sfx_strips_row.setSpacing(24)
+        # ── SFX / Jumpscares ───────────────────────────────────────────────
+        sfx_card, sfx_row = self._make_mixer_card("SFX / Jumpscares", _STRIP_H)
         self.sfx_strips: dict[str, AudioChannelStrip] = {}
         for n in (1, 2, 3):
             key = f"sfx{n}"
@@ -381,40 +401,71 @@ class ControlPanelWindow(QMainWindow):
             )
             strip.preview_clicked.connect(lambda k=key: self._on_sfx_preview(k))
             self.sfx_strips[key] = strip
-            sfx_strips_row.addWidget(strip)
-        sfx_strips_row.addStretch(1)
-        content_layout.addLayout(sfx_strips_row)
+            sfx_row.addWidget(strip)
+        sfx_row.addStretch(1)
+        page_layout.addWidget(sfx_card)
 
-        videos_header = QLabel("Videos")
-        videos_header.setObjectName("sectionHeader")
-        content_layout.addWidget(videos_header)
+        # ── Videos ────────────────────────────────────────────────────────
+        videos_card = QWidget()
+        videos_card.setObjectName("mixerSectionCard")
+        videos_card_layout = QVBoxLayout(videos_card)
+        videos_card_layout.setContentsMargins(12, 10, 12, 12)
+        videos_card_layout.setSpacing(8)
+
+        videos_title = QLabel("Videos")
+        videos_title.setObjectName("mixerSectionTitle")
+        videos_card_layout.addWidget(videos_title)
 
         self.video_strips_container = QWidget()
         self.video_strips_layout = QHBoxLayout(self.video_strips_container)
-        self.video_strips_layout.setContentsMargins(0, 0, 0, 0)
-        self.video_strips_layout.setSpacing(24)
+        self.video_strips_layout.setContentsMargins(4, 4, 4, 4)
+        self.video_strips_layout.setSpacing(16)
         self.video_strips_layout.addStretch(1)
 
         self.video_strips_scroll = QScrollArea()
         self.video_strips_scroll.setWidgetResizable(True)
         self.video_strips_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.video_strips_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.video_strips_scroll.setFixedHeight(260)
+        self.video_strips_scroll.setFixedHeight(_STRIP_H)
         self.video_strips_scroll.setWidget(self.video_strips_container)
-        content_layout.addWidget(self.video_strips_scroll)
+        videos_card_layout.addWidget(self.video_strips_scroll)
 
         self.no_videos_label = QLabel("No videos configured for this room yet.")
         self.no_videos_label.setObjectName("audioMixerCaption")
-        content_layout.addWidget(self.no_videos_label)
+        videos_card_layout.addWidget(self.no_videos_label)
 
-        content_layout.addStretch(1)
+        page_layout.addWidget(videos_card)
+        page_layout.addStretch(1)
 
-        caption = QLabel("You can upload custom audio in the game settings.")
-        caption.setObjectName("audioMixerCaption")
-        content_layout.addWidget(caption)
-
-        layout.addWidget(content, stretch=1)
+        outer.addWidget(page_scroll, stretch=1)
         return panel
+
+    def _make_mixer_card(self, title: str, strip_height: int) -> tuple[QWidget, QHBoxLayout]:
+        """Return a styled section card and the inner QHBoxLayout for adding strips to."""
+        card = QWidget()
+        card.setObjectName("mixerSectionCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(12, 10, 12, 12)
+        card_layout.setSpacing(8)
+
+        title_label = QLabel(title)
+        title_label.setObjectName("mixerSectionTitle")
+        card_layout.addWidget(title_label)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setFixedHeight(strip_height)
+
+        inner = QWidget()
+        inner_layout = QHBoxLayout(inner)
+        inner_layout.setContentsMargins(4, 4, 4, 4)
+        inner_layout.setSpacing(16)
+        scroll.setWidget(inner)
+
+        card_layout.addWidget(scroll)
+        return card, inner_layout
 
     def _build_controls_column(self) -> QWidget:
         panel = QWidget()
@@ -452,7 +503,7 @@ class ControlPanelWindow(QMainWindow):
         self.open_player_button.clicked.connect(self._on_open_player_window)
         content_layout.addWidget(self.open_player_button)
 
-        self.fullscreen_player_button = QPushButton("⛶ Fullscreen Player Window")
+        self.fullscreen_player_button = QPushButton("Fullscreen Player Window")
         self.fullscreen_player_button.clicked.connect(self._on_toggle_player_fullscreen)
         content_layout.addWidget(self.fullscreen_player_button)
 
@@ -516,6 +567,20 @@ class ControlPanelWindow(QMainWindow):
         self.hide_clue_icons_checkbox = QCheckBox("Hide clue icons on player window")
         self.hide_clue_icons_checkbox.toggled.connect(self._on_hide_clue_icons_toggled)
         content_layout.addWidget(self.hide_clue_icons_checkbox)
+
+        content_layout.addWidget(self._build_section_separator())
+
+        preview_header = QLabel("Player Screen")
+        preview_header.setObjectName("sectionHeader")
+        content_layout.addWidget(preview_header)
+
+        self.player_preview_label = QLabel("Player window not open")
+        self.player_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.player_preview_label.setStyleSheet(
+            "background-color: #0D1019; border: 1px solid #2E3648; border-radius: 4px; color: #5A6178; font-size: 11px;"
+        )
+        self.player_preview_label.setFixedHeight(140)
+        content_layout.addWidget(self.player_preview_label)
 
         content_layout.addStretch(1)
 
@@ -601,7 +666,7 @@ class ControlPanelWindow(QMainWindow):
             button.setToolTip(f"Plays: {Path(path).name}\n{path}")
         else:
             button.setToolTip(
-                "No briefing video set. Add one via ✏ Edit Objectives & Clues → Videos."
+                "No briefing video set. Add one via Edit Objectives & Clues > Videos."
             )
 
     def _update_bottom_bar(self) -> None:
@@ -681,9 +746,10 @@ class ControlPanelWindow(QMainWindow):
 
     def _build_objective_item_widget(self, objective) -> QWidget:
         widget = QWidget()
+        widget.setObjectName("objectiveItemWidget")
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(8, 6, 8, 6)
-        icon = QLabel("✅" if objective.completed else "\U0001F511")
+        icon = QLabel("✓" if objective.completed else "○")
         layout.addWidget(icon)
         text_layout = QVBoxLayout()
         text_layout.setSpacing(2)
@@ -743,7 +809,9 @@ class ControlPanelWindow(QMainWindow):
 
     def _build_clue_card_widget(self, hint, objective) -> QWidget:
         widget = QWidget()
-        widget.setToolTip("Click to put this clue's text in the message box below")
+        widget.setObjectName("clueCardWidget")
+        widget.setToolTip("Click to send clue • Double-click to edit")
+        widget.setCursor(Qt.CursorShape.PointingHandCursor)
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(8, 6, 8, 6)
 
@@ -787,6 +855,61 @@ class ControlPanelWindow(QMainWindow):
         self.message_edit.setFocus()
         self.message_edit.selectAll()
 
+    def _on_clue_card_double_clicked(self, item: QListWidgetItem) -> None:
+        hint_id = item.data(Qt.ItemDataRole.UserRole)
+        if hint_id is None:
+            return
+        self._edit_clue_by_id(hint_id)
+
+    def _on_clue_context_menu(self, pos) -> None:
+        item = self.clues_detail_list.itemAt(pos)
+        if item is None:
+            return
+        hint_id = item.data(Qt.ItemDataRole.UserRole)
+        if hint_id is None:
+            return
+        menu = QMenu(self)
+        edit_action = menu.addAction("Edit Clue")
+        delete_action = menu.addAction("Delete Clue")
+        action = menu.exec(self.clues_detail_list.mapToGlobal(pos))
+        if action == edit_action:
+            self._edit_clue_by_id(hint_id)
+        elif action == delete_action:
+            self._delete_clue_by_id(hint_id)
+
+    def _edit_clue_by_id(self, hint_id: int) -> None:
+        objective = self._selected_objective()
+        if objective is None:
+            return
+        hints = database.list_hints(objective.id)
+        hint = next((h for h in hints if h.id == hint_id), None)
+        if hint is None:
+            return
+        dialog = HintEditorDialog(
+            parent=self,
+            text=hint.text,
+            rating=hint.rating,
+            video_path=hint.video_path,
+        )
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            text, rating, video_path = dialog.values()
+            if text:
+                database.update_hint(hint_id, text=text, rating=rating, video_path=video_path)
+                self._refresh_detail()
+                self._refresh_clue_buttons()
+
+    def _delete_clue_by_id(self, hint_id: int) -> None:
+        confirm = QMessageBox.question(
+            self,
+            "Delete Clue",
+            "Delete this clue permanently?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm == QMessageBox.StandardButton.Yes:
+            database.delete_hint(hint_id)
+            self._refresh_detail()
+            self._refresh_clue_buttons()
+
     def _toggle_objective_complete(self) -> None:
         objective = self._selected_objective()
         if objective is None:
@@ -818,7 +941,6 @@ class ControlPanelWindow(QMainWindow):
     def _on_clear_player_window(self) -> None:
         if self.player_window is not None:
             self.player_window.clear_message()
-        self.feed_list.clear()
 
     # ------------------------------------------------------------------
     # Player window
@@ -874,6 +996,23 @@ class ControlPanelWindow(QMainWindow):
         self._video_finished_callback = None
         if callback is not None:
             callback()
+
+    def _update_player_preview(self) -> None:
+        if self.player_window is None or not self.player_window.isVisible():
+            self.player_preview_label.setText("Player window not open")
+            self.player_preview_label.setPixmap(QPixmap())
+            return
+        px = self.player_window.grab()
+        if px.isNull():
+            return
+        scaled = px.scaled(
+            self.player_preview_label.width(),
+            self.player_preview_label.height(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.player_preview_label.setText("")
+        self.player_preview_label.setPixmap(scaled)
 
     def _on_open_player_window(self) -> None:
         self._send_to_secondary_screen()
@@ -1001,7 +1140,10 @@ class ControlPanelWindow(QMainWindow):
             settings.master_volume,
             settings.master_muted,
         )
-        audio.play_file(path, volume)
+        pw = self.player_window
+        if pw is not None:
+            pw.duck_music()
+        audio.play_sfx(path, volume, on_finished=pw.unduck_music if pw is not None else None)
 
     def _on_sfx_preview(self, key: str) -> None:
         n = int(key[-1])

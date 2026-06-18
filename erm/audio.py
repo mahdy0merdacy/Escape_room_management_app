@@ -24,6 +24,10 @@ else:
 _effect: Optional[QSoundEffect] = None
 _file_player: Optional[QMediaPlayer] = None
 _file_audio_output: Optional[QAudioOutput] = None
+_sfx_player: Optional[QMediaPlayer] = None
+_sfx_audio_output: Optional[QAudioOutput] = None
+_sfx_should_play: bool = False
+_sfx_on_finished: list = [None]  # mutable slot so the status handler can read/clear it
 
 
 def ensure_alert_sound(path: Path = ALERT_SOUND_PATH) -> None:
@@ -73,6 +77,41 @@ def effective_video_volume(
     if video_muted or channel_muted or master_muted:
         return 0.0
     return (video_volume / 100.0) * (channel_volume / 100.0) * (master_volume / 100.0)
+
+
+def _on_sfx_status(status: QMediaPlayer.MediaStatus) -> None:
+    global _sfx_should_play
+    if status in (QMediaPlayer.MediaStatus.LoadedMedia, QMediaPlayer.MediaStatus.BufferedMedia):
+        if _sfx_should_play and _sfx_player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
+            _sfx_player.play()
+    elif status == QMediaPlayer.MediaStatus.EndOfMedia:
+        _sfx_should_play = False
+        cb = _sfx_on_finished[0]
+        _sfx_on_finished[0] = None
+        if cb:
+            cb()
+
+
+def play_sfx(path: Optional[str], volume: float, on_finished=None) -> None:
+    """Play a one-shot SFX file at `volume` (0.0–1.0).
+
+    Handles Windows WMF load-before-play and calls `on_finished` when the
+    clip ends.  Uses a dedicated player so it never conflicts with alert /
+    success / fail one-shots.
+    """
+    global _sfx_player, _sfx_audio_output, _sfx_should_play
+    if not path or not Path(path).exists():
+        return
+    if _sfx_player is None:
+        _sfx_player = QMediaPlayer()
+        _sfx_audio_output = QAudioOutput()
+        _sfx_player.setAudioOutput(_sfx_audio_output)
+        _sfx_player.mediaStatusChanged.connect(_on_sfx_status)
+    _sfx_on_finished[0] = on_finished
+    _sfx_audio_output.setVolume(max(0.0, min(1.0, volume)))
+    _sfx_should_play = True
+    _sfx_player.setSource(QUrl.fromLocalFile(path))
+    _sfx_player.play()
 
 
 def play_file(path: Optional[str], volume: float) -> None:

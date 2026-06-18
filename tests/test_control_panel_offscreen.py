@@ -73,9 +73,8 @@ def main():
         for strip in panel.audio_strips.values():
             assert strip.slider.value() == 100
             assert strip.mute_button.isChecked() is False
-            # Mixer sliders are inverted: full volume sits at the bottom of
-            # the track and rises as you drag up.
-            assert strip.slider.invertedAppearance() is True
+            # Sliders use normal orientation: drag up = more volume.
+            assert strip.slider.invertedAppearance() is False
         assert panel.audio_strips["alert"].status_label.text() == "No Status"
         assert panel.audio_strips["game_music"].status_label.text() == "Ready to Play"
         assert panel.audio_strips["video"].status_label.text() == "No Status"
@@ -121,7 +120,7 @@ def main():
         expected_videos = {path for _, path in panel._list_room_videos()}
         assert set(panel.video_strips.keys()) == expected_videos
         for strip in panel.video_strips.values():
-            assert strip.slider.invertedAppearance() is True
+            assert strip.slider.invertedAppearance() is False
 
         # Audio mixer: "Game Music" volume changes fade the player window's
         # background music towards the new target volume.
@@ -272,9 +271,9 @@ def main():
         assert player.compact_timer_label.isHidden() is False
 
         # Clearing the player window dissipates the message (fade-out) and
-        # restores the big centered timer with its caption.
+        # restores the big centered timer, but keeps the feed history intact.
         panel._on_clear_player_window()
-        assert panel.feed_list.count() == 0
+        assert panel.feed_list.count() == 1
         QTest.qWait(MESSAGE_FADE_WAIT_MS)
         assert player.message_label.text() == ""
         assert player.center_stack.currentWidget() is player.timer_view
