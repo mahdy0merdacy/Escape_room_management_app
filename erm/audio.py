@@ -27,6 +27,7 @@ _file_audio_output: Optional[QAudioOutput] = None
 _sfx_player: Optional[QMediaPlayer] = None
 _sfx_audio_output: Optional[QAudioOutput] = None
 _sfx_should_play: bool = False
+_sfx_volume: float = 1.0          # stored so the status handler can re-apply after WMF setSource
 _sfx_on_finished: list = [None]  # mutable slot so the status handler can read/clear it
 
 
@@ -83,6 +84,8 @@ def _on_sfx_status(status: QMediaPlayer.MediaStatus) -> None:
     global _sfx_should_play
     if status in (QMediaPlayer.MediaStatus.LoadedMedia, QMediaPlayer.MediaStatus.BufferedMedia):
         if _sfx_should_play and _sfx_player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
+            # Re-apply volume here: Windows WMF resets QAudioOutput volume after setSource()
+            _sfx_audio_output.setVolume(_sfx_volume)
             _sfx_player.play()
     elif status == QMediaPlayer.MediaStatus.EndOfMedia:
         _sfx_should_play = False
@@ -99,7 +102,7 @@ def play_sfx(path: Optional[str], volume: float, on_finished=None) -> None:
     clip ends.  Uses a dedicated player so it never conflicts with alert /
     success / fail one-shots.
     """
-    global _sfx_player, _sfx_audio_output, _sfx_should_play
+    global _sfx_player, _sfx_audio_output, _sfx_should_play, _sfx_volume
     if not path or not Path(path).exists():
         return
     if _sfx_player is None:
@@ -108,7 +111,8 @@ def play_sfx(path: Optional[str], volume: float, on_finished=None) -> None:
         _sfx_player.setAudioOutput(_sfx_audio_output)
         _sfx_player.mediaStatusChanged.connect(_on_sfx_status)
     _sfx_on_finished[0] = on_finished
-    _sfx_audio_output.setVolume(max(0.0, min(1.0, volume)))
+    _sfx_volume = max(0.0, min(1.0, volume))
+    _sfx_audio_output.setVolume(_sfx_volume)
     _sfx_should_play = True
     _sfx_player.setSource(QUrl.fromLocalFile(path))
     _sfx_player.play()

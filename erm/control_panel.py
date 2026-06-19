@@ -137,11 +137,11 @@ class ControlPanelWindow(QMainWindow):
         layout = QHBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
-        layout.addWidget(self._build_objectives_column())
+        layout.addWidget(self._build_objectives_column(), stretch=1)
         layout.addWidget(self._build_separator())
-        layout.addWidget(self._build_detail_column())
+        layout.addWidget(self._build_detail_column(), stretch=2)
         layout.addWidget(self._build_separator())
-        layout.addWidget(self._build_feed_column(), stretch=1)
+        layout.addWidget(self._build_feed_column(), stretch=2)
         return page
 
     def _build_separator(self) -> QFrame:
@@ -201,7 +201,8 @@ class ControlPanelWindow(QMainWindow):
     def _build_objectives_column(self) -> QWidget:
         panel = QWidget()
         panel.setObjectName("columnPanel")
-        panel.setFixedWidth(220)
+        panel.setMinimumWidth(180)
+        panel.setMaximumWidth(300)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -224,7 +225,8 @@ class ControlPanelWindow(QMainWindow):
     def _build_detail_column(self) -> QWidget:
         panel = QWidget()
         panel.setObjectName("columnPanel")
-        panel.setFixedWidth(340)
+        panel.setMinimumWidth(300)
+        panel.setMaximumWidth(520)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -1134,12 +1136,11 @@ class ControlPanelWindow(QMainWindow):
         path = getattr(settings, f"sfx{n}_path")
         if not path:
             return
-        volume = audio.effective_volume(
-            getattr(settings, f"sfx{n}_volume"),
-            getattr(settings, f"sfx{n}_muted"),
-            settings.master_volume,
-            settings.master_muted,
-        )
+        # SFX uses only its own channel volume — not reduced by master — so
+        # jumpscares always punch through at full intensity regardless of mix level.
+        sfx_vol = getattr(settings, f"sfx{n}_volume")
+        sfx_muted = getattr(settings, f"sfx{n}_muted")
+        volume = 0.0 if sfx_muted else (sfx_vol / 100.0)
         pw = self.player_window
         if pw is not None:
             pw.duck_music()

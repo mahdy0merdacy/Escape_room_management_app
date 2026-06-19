@@ -13,6 +13,7 @@ def main() -> None:
     audio.ensure_alert_sound()
 
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")  # cross-platform style that respects custom CSS on Windows
     icon_path = Path(__file__).parent / "assets" / "icon.ico"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
