@@ -264,14 +264,15 @@ def main():
         # message becomes the centered focal point.
         panel.message_edit.setText("Hello players")
         panel._on_send_message()
-        assert panel.feed_list.count() == 1
+        # 2 items: separator + message
+        assert panel.feed_list.count() == 2
         assert panel.messages_stat[1].text() == "1"
         assert player.message_label.text() == "Hello players"
         assert player.center_stack.currentWidget() is player.message_view
         assert player.compact_timer_label.isHidden() is False
 
         # Clearing the player window dissipates the message (fade-out) and
-        # restores the big centered timer, but keeps the feed history intact.
+        # restores the big centered timer; separator is removed, message stays.
         panel._on_clear_player_window()
         assert panel.feed_list.count() == 1
         QTest.qWait(MESSAGE_FADE_WAIT_MS)

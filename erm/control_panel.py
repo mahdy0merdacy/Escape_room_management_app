@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFontMetrics, QGuiApplication, QPixmap
+from PyQt6.QtGui import QColor, QFontMetrics, QGuiApplication, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -44,8 +44,11 @@ from erm.widgets.rating import RatingDots
 class _FeedDelegate(QStyledItemDelegate):
     """Word-wrapping delegate for the message feed list."""
     _V_PAD = 10
+    _SEP_ROLE = Qt.ItemDataRole.UserRole
 
     def sizeHint(self, option, index):
+        if index.data(self._SEP_ROLE) == "separator":
+            return QSize(option.rect.width() if option.rect.isValid() else 200, 22)
         text = index.data(Qt.ItemDataRole.DisplayRole) or ""
         viewport = self.parent().viewport() if self.parent() else None
         width = (viewport.width() - 8) if viewport else 200
@@ -54,6 +57,26 @@ class _FeedDelegate(QStyledItemDelegate):
             0, 0, max(1, width), 10_000, Qt.TextFlag.TextWordWrap, text
         )
         return QSize(width, rect.height() + self._V_PAD * 2)
+
+    def paint(self, painter, option, index):
+        if index.data(self._SEP_ROLE) == "separator":
+            painter.save()
+            rect = option.rect
+            mid_y = rect.center().y()
+            label = " on screen "
+            fm = painter.fontMetrics()
+            label_w = fm.horizontalAdvance(label)
+            cx = rect.center().x()
+            pen = QPen(QColor("#3D5AFE"))
+            pen.setWidthF(1.0)
+            painter.setPen(pen)
+            painter.drawLine(rect.left() + 8, mid_y, cx - label_w // 2 - 2, mid_y)
+            painter.drawLine(cx + label_w // 2 + 2, mid_y, rect.right() - 8, mid_y)
+            painter.setPen(QColor("#5470FF"))
+            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, label)
+            painter.restore()
+            return
+        super().paint(painter, option, index)
 
 
 def _format_time(seconds: int) -> str:
@@ -83,6 +106,7 @@ class ControlPanelWindow(QMainWindow):
         self.video_strips: dict[str, AudioChannelStrip] = {}
         self._current_video_path: Optional[str] = None
         self._video_finished_callback: Optional[Callable[[], None]] = None
+        self._feed_separator: Optional[QListWidgetItem] = None
 
         self.timer = QTimer(self)
         self.timer.setInterval(1000)
@@ -472,7 +496,7 @@ class ControlPanelWindow(QMainWindow):
     def _build_controls_column(self) -> QWidget:
         panel = QWidget()
         panel.setObjectName("columnPanel")
-        panel.setFixedWidth(280)
+        panel.setFixedWidth(300)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -492,9 +516,10 @@ class ControlPanelWindow(QMainWindow):
         content_layout.addWidget(self.complete_game_button)
 
         stats_row = QHBoxLayout()
-        self.puzzles_stat = self._build_stat_box("Puzzles Done")
-        self.messages_stat = self._build_stat_box("Messages Sent")
-        self.time_adjusted_stat = self._build_stat_box("Time Adjusted")
+        stats_row.setSpacing(6)
+        self.puzzles_stat = self._build_stat_box("Puzzles")
+        self.messages_stat = self._build_stat_box("Messages")
+        self.time_adjusted_stat = self._build_stat_box("Time Adj.")
         for box, _ in (self.puzzles_stat, self.messages_stat, self.time_adjusted_stat):
             stats_row.addWidget(box)
         content_layout.addLayout(stats_row)
@@ -504,10 +529,6 @@ class ControlPanelWindow(QMainWindow):
         self.open_player_button = QPushButton("Open player window")
         self.open_player_button.clicked.connect(self._on_open_player_window)
         content_layout.addWidget(self.open_player_button)
-
-        self.fullscreen_player_button = QPushButton("Fullscreen Player Window")
-        self.fullscreen_player_button.clicked.connect(self._on_toggle_player_fullscreen)
-        content_layout.addWidget(self.fullscreen_player_button)
 
         self.briefing_video_en_button = QPushButton("▶ Briefing Video (English)")
         self.briefing_video_en_button.setObjectName("playVideoButton")
@@ -581,12 +602,17 @@ class ControlPanelWindow(QMainWindow):
         self.player_preview_label.setStyleSheet(
             "background-color: #0D1019; border: 1px solid #2E3648; border-radius: 4px; color: #5A6178; font-size: 11px;"
         )
-        self.player_preview_label.setFixedHeight(140)
+        self.player_preview_label.setMinimumHeight(130)
         content_layout.addWidget(self.player_preview_label)
 
         content_layout.addStretch(1)
 
-        layout.addWidget(content, stretch=1)
+        controls_scroll = QScrollArea()
+        controls_scroll.setWidgetResizable(True)
+        controls_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        controls_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        controls_scroll.setWidget(content)
+        layout.addWidget(controls_scroll, stretch=1)
         return panel
 
     def _build_stat_box(self, label_text: str) -> tuple[QWidget, QLabel]:
@@ -927,10 +953,23 @@ class ControlPanelWindow(QMainWindow):
     # Message feed
     # ------------------------------------------------------------------
 
+    def _remove_feed_separator(self) -> None:
+        if self._feed_separator is not None:
+            row = self.feed_list.row(self._feed_separator)
+            if row >= 0:
+                self.feed_list.takeItem(row)
+            self._feed_separator = None
+
     def _on_send_message(self) -> None:
         text = self.message_edit.text().strip()
         if not text:
             return
+        self._remove_feed_separator()
+        sep = QListWidgetItem()
+        sep.setData(Qt.ItemDataRole.UserRole, "separator")
+        sep.setFlags(Qt.ItemFlag.NoItemFlags)
+        self.feed_list.addItem(sep)
+        self._feed_separator = sep
         self.feed_list.addItem(text)
         self.feed_list.scrollToBottom()
         self.message_edit.clear()
@@ -941,6 +980,7 @@ class ControlPanelWindow(QMainWindow):
             self.player_window.show_message(text)
 
     def _on_clear_player_window(self) -> None:
+        self._remove_feed_separator()
         if self.player_window is not None:
             self.player_window.clear_message()
 
@@ -1004,7 +1044,13 @@ class ControlPanelWindow(QMainWindow):
             self.player_preview_label.setText("Player window not open")
             self.player_preview_label.setPixmap(QPixmap())
             return
-        px = self.player_window.grab()
+        # grabWindow captures GPU-rendered content (e.g. video frames) that
+        # widget.grab() misses because video uses a hardware overlay.
+        try:
+            screen = self.player_window.screen() or QGuiApplication.primaryScreen()
+            px = screen.grabWindow(int(self.player_window.winId()))
+        except Exception:
+            px = self.player_window.grab()
         if px.isNull():
             return
         scaled = px.scaled(
