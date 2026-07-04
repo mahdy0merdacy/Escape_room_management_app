@@ -1,6 +1,7 @@
 """Live game-master Control Panel: objectives, clue cards, message feed,
 timer and session controls, plus the player-facing display window."""
 
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -86,6 +87,81 @@ def _format_time(seconds: int) -> str:
     if hours:
         return f"{hours}:{minutes:02d}:{secs:02d}"
     return f"{minutes:02d}:{secs:02d}"
+
+
+class _GameOverDialog(QDialog):
+    """Modal summary shown when the game ends (win or time-up)."""
+
+    def __init__(self, won: bool, room_name: str, session, room_duration: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Game Over")
+        self.setModal(True)
+        self.setFixedSize(420, 320)
+        self.setStyleSheet(self.parent().styleSheet() if self.parent() else "")
+
+        accent = "#F5C518" if won else "#FF3B3B"
+        headline = "ESCAPED!" if won else "TIME'S UP"
+        subtitle = "The team beat the room!" if won else "The team ran out of time."
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(36, 28, 36, 28)
+        layout.setSpacing(0)
+
+        hl = QLabel(headline)
+        hl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hl.setStyleSheet(
+            f"font-size: 40px; font-weight: bold; color: {accent}; "
+            "background: transparent; letter-spacing: 2px;"
+        )
+        layout.addWidget(hl)
+
+        room_lbl = QLabel(room_name)
+        room_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        room_lbl.setStyleSheet("color: #8899AA; font-size: 13px; background: transparent;")
+        layout.addWidget(room_lbl)
+
+        sub_lbl = QLabel(subtitle)
+        sub_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub_lbl.setStyleSheet(f"color: {accent}; font-size: 14px; background: transparent; margin-top: 4px;")
+        layout.addWidget(sub_lbl)
+
+        layout.addSpacing(20)
+
+        card = QWidget()
+        card.setObjectName("columnPanel")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(16, 12, 16, 12)
+        card_layout.setSpacing(8)
+
+        time_used = room_duration - session.remaining_seconds
+        stats = []
+        if won:
+            stats.append(("Time used", _format_time(time_used), "#CCDDEE"))
+            stats.append(("Time remaining", _format_time(session.remaining_seconds), accent))
+        else:
+            stats.append(("Time limit", _format_time(room_duration), "#CCDDEE"))
+        stats.append(("Messages sent", str(session.messages_sent), "#CCDDEE"))
+
+        for label, value, color in stats:
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            lbl = QLabel(label)
+            lbl.setStyleSheet("color: #8899AA; background: transparent; font-size: 13px;")
+            val = QLabel(value)
+            val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            val.setStyleSheet(f"color: {color}; font-weight: bold; background: transparent; font-size: 13px;")
+            row.addWidget(lbl)
+            row.addStretch()
+            row.addWidget(val)
+            card_layout.addLayout(row)
+
+        layout.addWidget(card)
+        layout.addSpacing(20)
+
+        close_btn = QPushButton("Close")
+        close_btn.setObjectName("primaryButton")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
 
 
 class ControlPanelWindow(QMainWindow):
@@ -970,7 +1046,8 @@ class ControlPanelWindow(QMainWindow):
         sep.setFlags(Qt.ItemFlag.NoItemFlags)
         self.feed_list.addItem(sep)
         self._feed_separator = sep
-        self.feed_list.addItem(text)
+        timestamp = datetime.now().strftime("%H:%M")
+        self.feed_list.addItem(f"[{timestamp}] {text}")
         self.feed_list.scrollToBottom()
         self.message_edit.clear()
         new_count = database.increment_session_messages(self.room_id)
@@ -1372,6 +1449,8 @@ class ControlPanelWindow(QMainWindow):
                 self.player_window.show_auto_message("GAME OVER", color="#FF3B3B")
             self._play_fail_sound()
             self.refresh_all()
+            session = database.get_session(self.room_id)
+            _GameOverDialog(False, self.room.name, session, self.room.duration_seconds, self).exec()
         else:
             database.save_session(self.room_id, "running", remaining)
             self.timer_label.setText(_format_time(remaining))
@@ -1412,6 +1491,8 @@ class ControlPanelWindow(QMainWindow):
         if self.room.ending_video_path:
             self._play_video(self.room.ending_video_path)
         self.refresh_all()
+        session = database.get_session(self.room_id)
+        _GameOverDialog(True, self.room.name, session, self.room.duration_seconds, self).exec()
 
     def _on_reset_game(self) -> None:
         if (

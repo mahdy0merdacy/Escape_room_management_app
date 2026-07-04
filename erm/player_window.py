@@ -11,8 +11,7 @@ from typing import Optional
 
 from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QSize, QUrl, Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QFontDatabase, QFontMetrics, QPixmap
-from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PyQt6.QtMultimediaWidgets import QVideoWidget
+from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer, QVideoFrame, QVideoSink
 from PyQt6.QtWidgets import (
     QGraphicsOpacityEffect,
     QHBoxLayout,
@@ -143,8 +142,10 @@ class PlayerWindow(QWidget):
         self.video_page.setObjectName("playerVideoPage")
         video_layout = QVBoxLayout(self.video_page)
         video_layout.setContentsMargins(0, 0, 0, 0)
-        self.video_widget = QVideoWidget()
-        video_layout.addWidget(self.video_widget)
+        self.video_label = QLabel()
+        self.video_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.video_label.setStyleSheet("background-color: black;")
+        video_layout.addWidget(self.video_label)
 
         self.stack.addWidget(self.timer_page)
         self.stack.addWidget(self.video_page)
@@ -174,7 +175,9 @@ class PlayerWindow(QWidget):
         self.media_player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
         self.media_player.setAudioOutput(self.audio_output)
-        self.media_player.setVideoOutput(self.video_widget)
+        self._video_sink = QVideoSink(self)
+        self.media_player.setVideoOutput(self._video_sink)
+        self._video_sink.videoFrameChanged.connect(self._on_video_frame)
         self.media_player.mediaStatusChanged.connect(self._on_media_status_changed)
 
         # --- Background music player (loops for the duration of the game) --
@@ -454,8 +457,24 @@ class PlayerWindow(QWidget):
             self.center_stack.setCurrentWidget(self.timer_view)
             self._message_opacity_effect.setOpacity(1.0)
 
+    def _on_video_frame(self, frame: QVideoFrame) -> None:
+        if not frame.isValid():
+            return
+        image = frame.toImage()
+        if image.isNull():
+            return
+        pixmap = QPixmap.fromImage(image)
+        self.video_label.setPixmap(
+            pixmap.scaled(
+                self.video_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
     def _on_media_status_changed(self, status: QMediaPlayer.MediaStatus) -> None:
         if status == QMediaPlayer.MediaStatus.EndOfMedia:
+            self.video_label.setPixmap(QPixmap())
             self.show_timer()
             self.video_finished.emit()
 
