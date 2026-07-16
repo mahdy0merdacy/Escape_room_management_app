@@ -8,10 +8,10 @@ Control Panel (dark)."""
 RATING_FILLED_COLOR = "#F5C518"
 RATING_EMPTY_COLOR = "#3A4257"
 
-LOCK_UNLOCKED_BG = "#1F4D34"
-LOCK_UNLOCKED_FG = "#3DDC84"
-LOCK_LOCKED_BG = "#2A3245"
-LOCK_LOCKED_FG = "#8B93A7"
+LOCK_UNLOCKED_BG = "#2A3245"   # used/revealed → grey
+LOCK_UNLOCKED_FG = "#8B93A7"
+LOCK_LOCKED_BG = "#1F4D34"    # available/not yet sent → green
+LOCK_LOCKED_FG = "#3DDC84"
 
 # Player window clue tracker: bright gold while a clue is still locked
 # (catches the eye), grayed out once the game master ticks it (used/revealed).

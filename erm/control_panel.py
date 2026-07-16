@@ -33,7 +33,7 @@ from PyQt6.QtWidgets import (
 )
 
 from erm import audio, database
-from erm.constants import APP_VERSION
+from erm.constants import APP_VERSION, AUDIO_EXTENSIONS
 from erm.player_window import PlayerWindow
 from erm.room_editor import HintEditorDialog, RoomEditorDialog
 from erm.theme import CONTROL_PANEL_STYLE
@@ -1107,7 +1107,10 @@ class ControlPanelWindow(QMainWindow):
         player = self._ensure_player_window()
         self._current_video_path = path
         self._video_finished_callback = on_finished
-        player.play_video(path)
+        if Path(path).suffix.lower() in AUDIO_EXTENSIONS:
+            player.play_audio(path)
+        else:
+            player.play_video(path)
         self._apply_video_volume()
 
     def _on_video_finished(self) -> None:

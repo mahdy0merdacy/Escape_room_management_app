@@ -161,6 +161,9 @@ class PlayerWindow(QWidget):
         self.clue_strip_layout = QHBoxLayout(self.clue_strip)
         self.clue_strip_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.clue_strip_layout.setSpacing(24)
+        self._clue_strip_opacity_effect = QGraphicsOpacityEffect(self.clue_strip)
+        self._clue_strip_opacity_effect.setOpacity(1.0)
+        self.clue_strip.setGraphicsEffect(self._clue_strip_opacity_effect)
         self.clue_strip.hide()
         root.addWidget(self.clue_strip)
 
@@ -228,6 +231,7 @@ class PlayerWindow(QWidget):
             self._fade_music_to(self._music_target_volume)
         if self.media_player.playbackState() != QMediaPlayer.PlaybackState.StoppedState:
             self.media_player.stop()
+        self.time_up_label.hide()
         self.stack.setCurrentWidget(self.timer_page)
         self._update_clue_strip_visibility()
 
@@ -236,6 +240,12 @@ class PlayerWindow(QWidget):
         self.time_up_label.hide()
         self.stack.setCurrentWidget(self.video_page)
         self._update_clue_strip_visibility()
+        self.media_player.setSource(QUrl.fromLocalFile(path))
+        self.media_player.play()
+
+    def play_audio(self, path: str) -> None:
+        """Play an audio-only file without switching away from the timer page."""
+        self._fade_music_to(0.0)
         self.media_player.setSource(QUrl.fromLocalFile(path))
         self.media_player.play()
 
@@ -351,6 +361,7 @@ class PlayerWindow(QWidget):
 
     def set_clue_icons_hidden(self, hidden: bool) -> None:
         self._clue_icons_hidden = hidden
+        self._clue_strip_opacity_effect.setOpacity(0.0 if hidden else 1.0)
         self._update_clue_strip_visibility()
 
     # ------------------------------------------------------------------
@@ -358,12 +369,16 @@ class PlayerWindow(QWidget):
     # ------------------------------------------------------------------
 
     def _update_clue_strip_visibility(self) -> None:
+        # Fully hide (collapses layout) when no clues or video is playing.
+        # When just "hidden by checkbox", use opacity=0 so the strip keeps
+        # its height and the layout doesn't shift.
         visible = (
             self.clue_strip_layout.count() > 0
-            and not self._clue_icons_hidden
             and self.stack.currentWidget() is not self.video_page
         )
         self.clue_strip.setVisible(visible)
+        if visible:
+            self.clue_strip.update()
 
     def _update_background_pixmap(self) -> None:
         if self.size().isEmpty():
@@ -458,6 +473,8 @@ class PlayerWindow(QWidget):
             self._message_opacity_effect.setOpacity(1.0)
 
     def _on_video_frame(self, frame: QVideoFrame) -> None:
+        if self.stack.currentWidget() is not self.video_page:
+            return
         if not frame.isValid():
             return
         image = frame.toImage()

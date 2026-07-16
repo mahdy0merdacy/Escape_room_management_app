@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
 )
 
 from erm import database
-from erm.constants import AUDIO_FILE_FILTER, IMAGE_FILE_FILTER, RATING_MAX, VIDEO_FILE_FILTER
+from erm.constants import AUDIO_FILE_FILTER, IMAGE_FILE_FILTER, MEDIA_FILE_FILTER, RATING_MAX, VIDEO_FILE_FILTER
 from erm.widgets.rating import RatingDots
 
 
@@ -95,7 +95,7 @@ class HintEditorDialog(QDialog):
         self.rating_preview.set_rating(value)
 
     def _browse_video(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select Hint Video", "", VIDEO_FILE_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, "Select Hint Video / Audio", "", MEDIA_FILE_FILTER)
         if path:
             self._video_path = path
             self._update_video_label()
@@ -210,7 +210,7 @@ class ObjectiveEditorDialog(QDialog):
         )
 
     def _browse_checkpoint_video(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select Checkpoint Video", "", VIDEO_FILE_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, "Select Checkpoint Video / Audio", "", MEDIA_FILE_FILTER)
         if path:
             database.update_objective(self.objective_id, checkpoint_video_path=path)
             self.video_label.setText(_video_label_text(path))

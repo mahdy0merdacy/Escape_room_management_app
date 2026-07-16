@@ -289,11 +289,14 @@ def main():
         assert isinstance(clue_icon, PlayerClueIcon)
         assert clue_icon.isChecked() is True
 
-        # "Hide clue icons on player window" toggle
+        # "Hide clue icons on player window" toggle — strip stays visible
+        # (keeps its layout height) but opacity drops to 0 so icons vanish
+        # without shifting the layout.
         panel.hide_clue_icons_checkbox.setChecked(True)
-        assert player.clue_strip.isHidden() is True
+        assert player.clue_strip.isVisible() is True
+        assert player._clue_strip_opacity_effect.opacity() == 0.0
         panel.hide_clue_icons_checkbox.setChecked(False)
-        assert player.clue_strip.isHidden() is False
+        assert player._clue_strip_opacity_effect.opacity() == 1.0
 
         # The clue strip auto-hides while a video plays (so it doesn't show
         # the player background behind the lock icons) and reappears once
