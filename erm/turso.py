@@ -16,12 +16,16 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-_URL = os.environ.get("TURSO_DATABASE_URL", "").replace("libsql://", "https://").rstrip("/")
-_TOKEN = os.environ.get("TURSO_AUTH_TOKEN", "")
+def _url() -> str:
+    return os.environ.get("TURSO_DATABASE_URL", "").replace("libsql://", "https://").rstrip("/")
+
+
+def _token() -> str:
+    return os.environ.get("TURSO_AUTH_TOKEN", "")
 
 
 def _configured() -> bool:
-    return bool(_URL and _TOKEN)
+    return bool(_url() and _token())
 
 
 def _arg(value: Any) -> dict:
@@ -45,9 +49,7 @@ def _cell(val: Any) -> Any:
 
 
 def _execute(sql: str, args: list) -> list[dict]:
-    """Run one SQL statement and return rows as list-of-dicts."""
-    if not _configured():
-        return []
+    """Run one SQL statement and return rows as list-of-dicts. Raises on error."""
     payload = {
         "requests": [
             {"type": "execute", "stmt": {"sql": sql, "args": [_arg(a) for a in args]}},
@@ -55,8 +57,8 @@ def _execute(sql: str, args: list) -> list[dict]:
         ]
     }
     resp = httpx.post(
-        f"{_URL}/v2/pipeline",
-        headers={"Authorization": f"Bearer {_TOKEN}", "Content-Type": "application/json"},
+        f"{_url()}/v2/pipeline",
+        headers={"Authorization": f"Bearer {_token()}", "Content-Type": "application/json"},
         json=payload,
         timeout=5.0,
     )
@@ -80,31 +82,40 @@ def _bg(fn: Callable, *args) -> None:
 # Public helpers
 # ---------------------------------------------------------------------------
 
-def fetch_bookings(room_slug: str) -> list[dict]:
+def fetch_bookings(room_slug: str) -> tuple[list[dict], str]:
     """Return today's confirmed bookings for *room_slug*, sorted by start time.
 
-    Each dict has: id, customerName, partySize, startTime, endTime, status.
-    Returns [] on any error or if Turso is not configured.
+    Returns (rows, error_message). error_message is "" on success, a
+    human-readable string describing the problem on failure.
+    Each row dict has: id, customerName, partySize, startTime, endTime, status.
     """
-    if not _configured() or not room_slug:
-        return []
+    if not _url() or not _token():
+        return [], "Turso credentials not configured (TURSO_DATABASE_URL / TURSO_AUTH_TOKEN missing)."
+    if not room_slug:
+        return [], "This room has no website slug configured."
+    today = datetime.now().strftime("%Y-%m-%d")
     try:
-        return _execute(
+        rows = _execute(
             'SELECT b.id, b.customerName, b.partySize, b.startTime, b.endTime, b.status '
             'FROM "Booking" b '
             'JOIN "Room" r ON b."roomId" = r.id '
-            'WHERE r.slug = ? AND b.status = "confirmed" '
-            'AND DATE(b."startTime") = DATE("now") '
-            'ORDER BY b."startTime" ASC '
+            'WHERE r.slug = ? AND LOWER(b.status) = ? '
+            'AND DATE(b.startTime) = ? '
+            'ORDER BY b.startTime ASC '
             'LIMIT 20',
-            [room_slug],
+            [room_slug, "confirmed", today],
         )
-    except Exception:
+        log.info("turso: fetch_bookings(%s, %s) → %d rows", room_slug, today, len(rows))
+        return rows, ""
+    except Exception as exc:
+        msg = str(exc)
         log.exception("turso: fetch_bookings failed")
-        return []
+        return [], f"Query failed: {msg}"
 
 
 def _do_push_success_rate(room_slug: str, wins: int, total: int) -> None:
+    if not _configured():
+        return
     rate = round((wins / total * 100), 2) if total > 0 else 0.0
     try:
         _execute('UPDATE "Room" SET "successRate" = ? WHERE slug = ?', [rate, room_slug])
@@ -120,6 +131,8 @@ def push_success_rate(room_slug: str, wins: int, total: int) -> None:
 
 
 def _do_insert_leaderboard(room_slug: str, group_name: str, party_size: int, time_spent_sec: int) -> None:
+    if not _configured():
+        return
     try:
         rows = _execute('SELECT id FROM "Room" WHERE slug = ?', [room_slug])
         if not rows:

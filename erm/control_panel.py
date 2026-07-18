@@ -92,32 +92,39 @@ def _format_time(seconds: int) -> str:
 class _BookingPickerDialog(QDialog):
     """Let the operator select the current group from Turso bookings."""
 
-    def __init__(self, bookings: list[dict], parent=None):
+    def __init__(self, bookings: list[dict], error: str = "", parent=None):
         super().__init__(parent)
         self.setWindowTitle("Select Current Group")
         self.setModal(True)
-        self.setFixedSize(480, 340)
+        self.setFixedSize(500, 360)
         self.selected: dict | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
         layout.setSpacing(10)
 
-        header = QLabel("Select the group for this session (used for leaderboard):")
+        header = QLabel("Select the group for this session (used for the leaderboard):")
         header.setWordWrap(True)
         layout.addWidget(header)
 
         self._list = QListWidget()
-        if bookings:
+        if error:
+            err_item = QListWidgetItem(f"Error: {error}")
+            err_item.setForeground(QColor("#FF8A8A"))
+            self._list.addItem(err_item)
+        elif bookings:
             for b in bookings:
                 start = (b.get("startTime") or "")[:16].replace("T", " ")
-                label = f"{b.get('customerName', '?')}  —  {b.get('partySize', '?')} players  |  {start}"
+                label = (
+                    f"{b.get('customerName', '?')}  —  "
+                    f"{b.get('partySize', '?')} players  |  {start}"
+                )
                 item = QListWidgetItem(label)
                 item.setData(Qt.ItemDataRole.UserRole, b)
                 self._list.addItem(item)
             self._list.setCurrentRow(0)
         else:
-            self._list.addItem(QListWidgetItem("No confirmed bookings found for this room"))
+            self._list.addItem(QListWidgetItem("No confirmed bookings found for today"))
         layout.addWidget(self._list, stretch=1)
 
         btn_row = QHBoxLayout()
@@ -127,7 +134,7 @@ class _BookingPickerDialog(QDialog):
         btn_row.addStretch()
         confirm_btn = QPushButton("Confirm selection")
         confirm_btn.setObjectName("primaryButton")
-        confirm_btn.setEnabled(bool(bookings))
+        confirm_btn.setEnabled(bool(bookings) and not error)
         confirm_btn.clicked.connect(self._on_confirm)
         btn_row.addWidget(confirm_btn)
         layout.addLayout(btn_row)
@@ -1615,8 +1622,8 @@ class ControlPanelWindow(QMainWindow):
                 "Set a website slug for this room in Edit Objectives & Clues first.",
             )
             return
-        bookings = turso.fetch_bookings(self.room.slug)
-        dlg = _BookingPickerDialog(bookings, self)
+        bookings, error = turso.fetch_bookings(self.room.slug)
+        dlg = _BookingPickerDialog(bookings, error, self)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.selected:
             self._current_booking = dlg.selected
             self._refresh_link_group_button()
