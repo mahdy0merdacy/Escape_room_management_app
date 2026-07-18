@@ -342,6 +342,11 @@ class ControlPanelWindow(QMainWindow):
         self.edit_room_button.clicked.connect(self._open_room_editor)
         layout.addWidget(self.edit_room_button)
 
+        self.link_group_button = QPushButton("Link Group")
+        self.link_group_button.setObjectName("linkGroupButton")
+        self.link_group_button.clicked.connect(self._on_link_group)
+        layout.addWidget(self.link_group_button)
+
         self.fullscreen_button = QPushButton("Fullscreen")
         self.fullscreen_button.setCheckable(True)
         self.fullscreen_button.toggled.connect(self._toggle_fullscreen)
@@ -1570,11 +1575,7 @@ class ControlPanelWindow(QMainWindow):
             return
         self.timer.stop()
         self._current_booking = None
-        if self.room.slug:
-            bookings = turso.fetch_bookings(self.room.slug)
-            dlg = _BookingPickerDialog(bookings, self)
-            if dlg.exec() == QDialog.DialogCode.Accepted:
-                self._current_booking = dlg.selected
+        self._refresh_link_group_button()
         self._start_fresh_session(status="idle")
 
     # ------------------------------------------------------------------
@@ -1605,6 +1606,32 @@ class ControlPanelWindow(QMainWindow):
         dialog = RoomEditorDialog(self.room_id, parent=self)
         dialog.exec()
         self.refresh_all()
+
+    def _on_link_group(self) -> None:
+        if not self.room.slug:
+            QMessageBox.information(
+                self,
+                "No slug configured",
+                "Set a website slug for this room in Edit Objectives & Clues first.",
+            )
+            return
+        bookings = turso.fetch_bookings(self.room.slug)
+        dlg = _BookingPickerDialog(bookings, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.selected:
+            self._current_booking = dlg.selected
+            self._refresh_link_group_button()
+
+    def _refresh_link_group_button(self) -> None:
+        if self._current_booking:
+            name = self._current_booking.get("customerName", "Group")
+            size = self._current_booking.get("partySize", "?")
+            self.link_group_button.setText(f"Group: {name} ({size})")
+            self.link_group_button.setProperty("linked", "true")
+        else:
+            self.link_group_button.setText("Link Group")
+            self.link_group_button.setProperty("linked", "false")
+        self.link_group_button.style().unpolish(self.link_group_button)
+        self.link_group_button.style().polish(self.link_group_button)
 
     # ------------------------------------------------------------------
     # Window chrome

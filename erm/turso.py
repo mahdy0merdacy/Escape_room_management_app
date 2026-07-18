@@ -81,10 +81,10 @@ def _bg(fn: Callable, *args) -> None:
 # ---------------------------------------------------------------------------
 
 def fetch_bookings(room_slug: str) -> list[dict]:
-    """Return confirmed bookings for *room_slug* sorted nearest to now first.
+    """Return today's confirmed bookings for *room_slug*, sorted by start time.
 
     Each dict has: id, customerName, partySize, startTime, endTime, status.
-    Returns [] on any error.
+    Returns [] on any error or if Turso is not configured.
     """
     if not _configured() or not room_slug:
         return []
@@ -94,8 +94,9 @@ def fetch_bookings(room_slug: str) -> list[dict]:
             'FROM "Booking" b '
             'JOIN "Room" r ON b."roomId" = r.id '
             'WHERE r.slug = ? AND b.status = "confirmed" '
-            'ORDER BY ABS(JULIANDAY(b."startTime") - JULIANDAY("now")) ASC '
-            'LIMIT 10',
+            'AND DATE(b."startTime") = DATE("now") '
+            'ORDER BY b."startTime" ASC '
+            'LIMIT 20',
             [room_slug],
         )
     except Exception:

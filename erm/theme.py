@@ -356,6 +356,27 @@ QPushButton#sfxButton:pressed {
     background-color: #162219;
 }
 
+QPushButton#linkGroupButton {
+    background-color: #2D2310;
+    color: #F5A623;
+    border: 1px solid #4A3A18;
+    font-weight: 700;
+    font-size: 13px;
+}
+QPushButton#linkGroupButton:hover {
+    background-color: #3A2E14;
+    color: #FFB84D;
+    border-color: #6A5428;
+}
+QPushButton#linkGroupButton:pressed {
+    background-color: #1E1708;
+}
+QPushButton#linkGroupButton[linked="true"] {
+    background-color: #1E2E26;
+    color: #5ECBA1;
+    border-color: #2A4036;
+}
+
 QLineEdit, QTextEdit, QPlainTextEdit {
     background-color: #0D1019;
     border: 1px solid #252E44;
