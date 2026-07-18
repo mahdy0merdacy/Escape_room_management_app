@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
 )
 
 from erm import database
+from PyQt6.QtWidgets import QComboBox
 from erm.constants import AUDIO_FILE_FILTER, IMAGE_FILE_FILTER, MEDIA_FILE_FILTER, RATING_MAX, VIDEO_FILE_FILTER
 from erm.widgets.rating import RatingDots
 
@@ -328,6 +329,11 @@ class RoomEditorDialog(QDialog):
         self.duration_spin.setRange(1, 600)
         self.duration_spin.editingFinished.connect(self._on_duration_changed)
         name_row.addWidget(self.duration_spin)
+        name_row.addWidget(QLabel("Website slug:"))
+        self.slug_combo = QComboBox()
+        self.slug_combo.addItems(["(none)", "annabelle", "stranger-things", "breaking-bad"])
+        self.slug_combo.currentTextChanged.connect(self._on_slug_changed)
+        name_row.addWidget(self.slug_combo)
         layout.addLayout(name_row)
 
         video_group = QGroupBox("Videos")
@@ -497,6 +503,8 @@ class RoomEditorDialog(QDialog):
             return
         self.name_edit.setText(room.name)
         self.duration_spin.setValue(max(1, room.duration_seconds // 60))
+        slug_index = self.slug_combo.findText(room.slug or "(none)")
+        self.slug_combo.setCurrentIndex(max(0, slug_index))
         self.intro_label.setText(_video_label_text(room.intro_video_path))
         self.intro_label.setToolTip(room.intro_video_path or "")
         self.intro_fr_label.setText(_video_label_text(room.intro_video_path_fr))
@@ -530,6 +538,9 @@ class RoomEditorDialog(QDialog):
     def _on_duration_changed(self) -> None:
         minutes = self.duration_spin.value()
         database.update_room(self.room_id, duration_seconds=minutes * 60)
+
+    def _on_slug_changed(self, text: str) -> None:
+        database.update_room(self.room_id, slug=text if text != "(none)" else None)
 
     def _browse_intro_video(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select Briefing Video", "", VIDEO_FILE_FILTER)

@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from erm import audio, database
+from erm import audio, database, turso
 from erm.constants import APP_VERSION, AUDIO_EXTENSIONS
 from erm.player_window import PlayerWindow
 from erm.room_editor import HintEditorDialog, RoomEditorDialog
@@ -87,6 +87,56 @@ def _format_time(seconds: int) -> str:
     if hours:
         return f"{hours}:{minutes:02d}:{secs:02d}"
     return f"{minutes:02d}:{secs:02d}"
+
+
+class _BookingPickerDialog(QDialog):
+    """Let the operator select the current group from Turso bookings."""
+
+    def __init__(self, bookings: list[dict], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Current Group")
+        self.setModal(True)
+        self.setFixedSize(480, 340)
+        self.selected: dict | None = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
+
+        header = QLabel("Select the group for this session (used for leaderboard):")
+        header.setWordWrap(True)
+        layout.addWidget(header)
+
+        self._list = QListWidget()
+        if bookings:
+            for b in bookings:
+                start = (b.get("startTime") or "")[:16].replace("T", " ")
+                label = f"{b.get('customerName', '?')}  —  {b.get('partySize', '?')} players  |  {start}"
+                item = QListWidgetItem(label)
+                item.setData(Qt.ItemDataRole.UserRole, b)
+                self._list.addItem(item)
+            self._list.setCurrentRow(0)
+        else:
+            self._list.addItem(QListWidgetItem("No confirmed bookings found for this room"))
+        layout.addWidget(self._list, stretch=1)
+
+        btn_row = QHBoxLayout()
+        skip_btn = QPushButton("Skip (no leaderboard)")
+        skip_btn.clicked.connect(self.reject)
+        btn_row.addWidget(skip_btn)
+        btn_row.addStretch()
+        confirm_btn = QPushButton("Confirm selection")
+        confirm_btn.setObjectName("primaryButton")
+        confirm_btn.setEnabled(bool(bookings))
+        confirm_btn.clicked.connect(self._on_confirm)
+        btn_row.addWidget(confirm_btn)
+        layout.addLayout(btn_row)
+
+    def _on_confirm(self) -> None:
+        item = self._list.currentItem()
+        if item:
+            self.selected = item.data(Qt.ItemDataRole.UserRole)
+        self.accept()
 
 
 class _GameOverDialog(QDialog):
@@ -183,6 +233,7 @@ class ControlPanelWindow(QMainWindow):
         self._current_video_path: Optional[str] = None
         self._video_finished_callback: Optional[Callable[[], None]] = None
         self._feed_separator: Optional[QListWidgetItem] = None
+        self._current_booking: Optional[dict] = None
 
         self.timer = QTimer(self)
         self.timer.setInterval(1000)
@@ -1452,6 +1503,8 @@ class ControlPanelWindow(QMainWindow):
                 self.player_window.show_auto_message("GAME OVER", color="#FF3B3B")
             self._play_fail_sound()
             self.refresh_all()
+            room = database.get_room(self.room_id)
+            turso.push_success_rate(room.slug, room.wins, room.wins + room.losses)
             session = database.get_session(self.room_id)
             _GameOverDialog(False, self.room.name, session, self.room.duration_seconds, self).exec()
         else:
@@ -1494,7 +1547,17 @@ class ControlPanelWindow(QMainWindow):
         if self.room.ending_video_path:
             self._play_video(self.room.ending_video_path)
         self.refresh_all()
+        room = database.get_room(self.room_id)
         session = database.get_session(self.room_id)
+        turso.push_success_rate(room.slug, room.wins, room.wins + room.losses)
+        if room.slug and self._current_booking:
+            time_spent = self.room.duration_seconds - session.remaining_seconds
+            turso.insert_leaderboard_entry(
+                room.slug,
+                self._current_booking.get("customerName", "Unknown"),
+                int(self._current_booking.get("partySize") or 0),
+                time_spent,
+            )
         _GameOverDialog(True, self.room.name, session, self.room.duration_seconds, self).exec()
 
     def _on_reset_game(self) -> None:
@@ -1506,6 +1569,12 @@ class ControlPanelWindow(QMainWindow):
         ):
             return
         self.timer.stop()
+        self._current_booking = None
+        if self.room.slug:
+            bookings = turso.fetch_bookings(self.room.slug)
+            dlg = _BookingPickerDialog(bookings, self)
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                self._current_booking = dlg.selected
         self._start_fresh_session(status="idle")
 
     # ------------------------------------------------------------------

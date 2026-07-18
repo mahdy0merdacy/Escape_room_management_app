@@ -13,6 +13,7 @@ class Room:
     losses: int = 0
     intro_video_path_fr: Optional[str] = None
     background_image_path: Optional[str] = None
+    slug: Optional[str] = None
 
 
 @dataclass

@@ -157,6 +157,7 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     )
     _ensure_column(conn, "rooms", "intro_video_path_fr", "intro_video_path_fr TEXT")
     _ensure_column(conn, "rooms", "background_image_path", "background_image_path TEXT")
+    _ensure_column(conn, "rooms", "slug", "slug TEXT")
     for n in (1, 2, 3):
         _ensure_column(conn, "room_audio_settings", f"sfx{n}_volume", f"sfx{n}_volume INTEGER NOT NULL DEFAULT 100")
         _ensure_column(conn, "room_audio_settings", f"sfx{n}_muted", f"sfx{n}_muted INTEGER NOT NULL DEFAULT 0")
@@ -186,6 +187,7 @@ def _row_to_room(row: sqlite3.Row) -> Room:
         losses=row["losses"],
         intro_video_path_fr=row["intro_video_path_fr"],
         background_image_path=row["background_image_path"],
+        slug=row["slug"] if "slug" in row.keys() else None,
     )
 
 
@@ -227,6 +229,7 @@ def update_room(room_id: int, **fields) -> None:
         "ending_video_path",
         "intro_video_path_fr",
         "background_image_path",
+        "slug",
     }
     columns = [key for key in fields if key in allowed]
     if not columns:
