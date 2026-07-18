@@ -13,8 +13,9 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 
 
 def _load_dotenv() -> None:
-    """Load key=value pairs from a .env file next to main.py into os.environ."""
-    env_file = Path(__file__).parent / ".env"
+    """Load key=value pairs from a .env file next to main.py (dev) or the EXE (frozen)."""
+    base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+    env_file = base / ".env"
     if not env_file.exists():
         return
     for line in env_file.read_text(encoding="utf-8").splitlines():
