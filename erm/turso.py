@@ -12,9 +12,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
-import httpx
-
 log = logging.getLogger(__name__)
+
+try:
+    import httpx as _httpx
+except ImportError:
+    _httpx = None  # type: ignore
 
 def _url() -> str:
     return os.environ.get("TURSO_DATABASE_URL", "").replace("libsql://", "https://").rstrip("/")
@@ -50,13 +53,15 @@ def _cell(val: Any) -> Any:
 
 def _execute(sql: str, args: list) -> list[dict]:
     """Run one SQL statement and return rows as list-of-dicts. Raises on error."""
+    if _httpx is None:
+        raise RuntimeError("httpx is not installed — run: pip install httpx")
     payload = {
         "requests": [
             {"type": "execute", "stmt": {"sql": sql, "args": [_arg(a) for a in args]}},
             {"type": "close"},
         ]
     }
-    resp = httpx.post(
+    resp = _httpx.post(
         f"{_url()}/v2/pipeline",
         headers={"Authorization": f"Bearer {_token()}", "Content-Type": "application/json"},
         json=payload,
@@ -89,6 +94,8 @@ def fetch_bookings(room_slug: str) -> tuple[list[dict], str]:
     human-readable string describing the problem on failure.
     Each row dict has: id, customerName, partySize, startTime, endTime, status.
     """
+    if _httpx is None:
+        return [], "httpx not installed — run: pip install httpx"
     if not _url() or not _token():
         return [], "Turso credentials not configured (TURSO_DATABASE_URL / TURSO_AUTH_TOKEN missing)."
     if not room_slug:
