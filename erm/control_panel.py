@@ -190,10 +190,9 @@ class _GameOverDialog(QDialog):
         card_layout.setContentsMargins(16, 12, 16, 12)
         card_layout.setSpacing(8)
 
-        time_used = room_duration - session.remaining_seconds
         stats = []
         if won:
-            stats.append(("Time used", _format_time(time_used), "#CCDDEE"))
+            stats.append(("Time used", _format_time(session.elapsed_seconds), "#CCDDEE"))
             stats.append(("Time remaining", _format_time(session.remaining_seconds), accent))
         else:
             stats.append(("Time limit", _format_time(room_duration), "#CCDDEE"))
@@ -1506,10 +1505,11 @@ class ControlPanelWindow(QMainWindow):
     def _on_tick(self) -> None:
         session = database.get_session(self.room_id)
         remaining = max(0, session.remaining_seconds - 1)
+        new_elapsed = session.elapsed_seconds + 1
         if remaining <= 0:
             self.timer.stop()
             database.record_result(self.room_id, won=False)
-            database.save_session(self.room_id, "completed", 0)
+            database.save_session(self.room_id, "completed", 0, elapsed_seconds=new_elapsed)
             if self.player_window is not None:
                 self.player_window.show_time_up()
                 self.player_window.show_auto_message("GAME OVER", color="#FF3B3B")
@@ -1520,7 +1520,7 @@ class ControlPanelWindow(QMainWindow):
             session = database.get_session(self.room_id)
             _GameOverDialog(False, self.room.name, session, self.room.duration_seconds, self).exec()
         else:
-            database.save_session(self.room_id, "running", remaining)
+            database.save_session(self.room_id, "running", remaining, elapsed_seconds=new_elapsed)
             self.timer_label.setText(_format_time(remaining))
             if self.player_window is not None:
                 self.player_window.set_time(remaining)
@@ -1563,12 +1563,11 @@ class ControlPanelWindow(QMainWindow):
         session = database.get_session(self.room_id)
         turso.push_success_rate(room.slug, room.wins, room.wins + room.losses)
         if room.slug and self._current_booking:
-            time_spent = self.room.duration_seconds - session.remaining_seconds
             turso.insert_leaderboard_entry(
                 room.slug,
                 self._current_booking.get("customerName", "Unknown"),
                 int(self._current_booking.get("partySize") or 0),
-                time_spent,
+                session.elapsed_seconds,
             )
         _GameOverDialog(True, self.room.name, session, self.room.duration_seconds, self).exec()
 

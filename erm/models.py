@@ -54,6 +54,7 @@ class SessionState:
     remaining_seconds: int
     messages_sent: int = 0
     time_adjusted_seconds: int = 0
+    elapsed_seconds: int = 0
     updated_at: Optional[str] = None
 
 

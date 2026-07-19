@@ -155,6 +155,7 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(
         conn, "sessions", "time_adjusted_seconds", "time_adjusted_seconds INTEGER NOT NULL DEFAULT 0"
     )
+    _ensure_column(conn, "sessions", "elapsed_seconds", "elapsed_seconds INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "rooms", "intro_video_path_fr", "intro_video_path_fr TEXT")
     _ensure_column(conn, "rooms", "background_image_path", "background_image_path TEXT")
     _ensure_column(conn, "rooms", "slug", "slug TEXT")
@@ -579,12 +580,14 @@ def move_clue(clue_id: int, direction: int) -> None:
 # ---------------------------------------------------------------------------
 
 def _row_to_session(row: sqlite3.Row) -> SessionState:
+    keys = row.keys()
     return SessionState(
         room_id=row["room_id"],
         status=row["status"],
         remaining_seconds=row["remaining_seconds"],
         messages_sent=row["messages_sent"],
         time_adjusted_seconds=row["time_adjusted_seconds"],
+        elapsed_seconds=row["elapsed_seconds"] if "elapsed_seconds" in keys else 0,
         updated_at=row["updated_at"],
     )
 
@@ -609,27 +612,31 @@ def save_session(
     remaining_seconds: int,
     messages_sent: Optional[int] = None,
     time_adjusted_seconds: Optional[int] = None,
+    elapsed_seconds: Optional[int] = None,
 ) -> None:
     conn = get_connection()
-    if messages_sent is None or time_adjusted_seconds is None:
+    if messages_sent is None or time_adjusted_seconds is None or elapsed_seconds is None:
         existing = conn.execute(
-            "SELECT messages_sent, time_adjusted_seconds FROM sessions WHERE room_id = ?",
+            "SELECT messages_sent, time_adjusted_seconds, elapsed_seconds FROM sessions WHERE room_id = ?",
             (room_id,),
         ).fetchone()
         if messages_sent is None:
             messages_sent = existing["messages_sent"] if existing else 0
         if time_adjusted_seconds is None:
             time_adjusted_seconds = existing["time_adjusted_seconds"] if existing else 0
+        if elapsed_seconds is None:
+            elapsed_seconds = (existing["elapsed_seconds"] if existing and "elapsed_seconds" in existing.keys() else 0)
     conn.execute(
         "INSERT INTO sessions (room_id, status, remaining_seconds, messages_sent, "
-        "time_adjusted_seconds, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?) "
+        "time_adjusted_seconds, elapsed_seconds, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(room_id) DO UPDATE SET status = excluded.status, "
         "remaining_seconds = excluded.remaining_seconds, "
         "messages_sent = excluded.messages_sent, "
         "time_adjusted_seconds = excluded.time_adjusted_seconds, "
+        "elapsed_seconds = excluded.elapsed_seconds, "
         "updated_at = excluded.updated_at",
-        (room_id, status, remaining_seconds, messages_sent, time_adjusted_seconds, datetime.now().isoformat()),
+        (room_id, status, remaining_seconds, messages_sent, time_adjusted_seconds, elapsed_seconds, datetime.now().isoformat()),
     )
     conn.commit()
 
@@ -645,7 +652,7 @@ def start_session(room_id: int, status: str = "running") -> SessionState:
     conn.execute("DELETE FROM objective_progress WHERE room_id = ?", (room_id,))
     conn.execute("DELETE FROM clue_progress WHERE room_id = ?", (room_id,))
     conn.commit()
-    save_session(room_id, status, duration, messages_sent=0, time_adjusted_seconds=0)
+    save_session(room_id, status, duration, messages_sent=0, time_adjusted_seconds=0, elapsed_seconds=0)
     return SessionState(room_id=room_id, status=status, remaining_seconds=duration)
 
 
