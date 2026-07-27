@@ -685,6 +685,7 @@ class ControlPanelWindow(QMainWindow):
         self.timer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(self.timer_label)
 
+        # Minutes adjustment row
         adjust_row = QHBoxLayout()
         minus_button = QPushButton("-")
         minus_button.setFixedWidth(32)
@@ -700,6 +701,23 @@ class ControlPanelWindow(QMainWindow):
         plus_button.clicked.connect(self._increment_delta)
         adjust_row.addWidget(plus_button)
         content_layout.addLayout(adjust_row)
+
+        # Seconds adjustment row
+        adjust_seconds_row = QHBoxLayout()
+        minus_seconds_button = QPushButton("-")
+        minus_seconds_button.setFixedWidth(32)
+        minus_seconds_button.clicked.connect(self._decrement_delta_seconds)
+        adjust_seconds_row.addWidget(minus_seconds_button)
+        self.delta_seconds_spin = QSpinBox()
+        self.delta_seconds_spin.setRange(-59, 59)
+        self.delta_seconds_spin.setValue(0)
+        self.delta_seconds_spin.setSuffix(" sec")
+        adjust_seconds_row.addWidget(self.delta_seconds_spin, stretch=1)
+        plus_seconds_button = QPushButton("+")
+        plus_seconds_button.setFixedWidth(32)
+        plus_seconds_button.clicked.connect(self._increment_delta_seconds)
+        adjust_seconds_row.addWidget(plus_seconds_button)
+        content_layout.addLayout(adjust_seconds_row)
 
         add_time_button = QPushButton("Add time")
         add_time_button.clicked.connect(self._on_add_time)
@@ -1492,12 +1510,22 @@ class ControlPanelWindow(QMainWindow):
     def _increment_delta(self) -> None:
         self.delta_spin.setValue(self.delta_spin.value() + 1)
 
+    def _decrement_delta_seconds(self) -> None:
+        self.delta_seconds_spin.setValue(self.delta_seconds_spin.value() - 1)
+
+    def _increment_delta_seconds(self) -> None:
+        self.delta_seconds_spin.setValue(self.delta_seconds_spin.value() + 1)
+
     def _on_add_time(self) -> None:
-        delta_seconds = self.delta_spin.value() * 60
-        if delta_seconds == 0:
+        delta_minutes = self.delta_spin.value()
+        delta_seconds = self.delta_seconds_spin.value()
+        delta_total_seconds = (delta_minutes * 60) + delta_seconds
+        if delta_total_seconds == 0:
             return
-        session = database.adjust_session_time(self.room_id, delta_seconds)
+        session = database.adjust_session_time(self.room_id, delta_total_seconds)
         self.timer_label.setText(_format_time(session.remaining_seconds))
+        # Reset the seconds spinner after adding time
+        self.delta_seconds_spin.setValue(0)
         if self.player_window is not None:
             self.player_window.set_time(session.remaining_seconds)
         self._refresh_stats()
