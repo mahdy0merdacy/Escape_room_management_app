@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: windows-latest
     permissions:
-      contents: write   # required to create/update releases
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -24,30 +24,32 @@ jobs:
       - name: Build executable
         run: pyinstaller EscapeRoomMaster.spec --noconfirm
 
-      - name: Create media/data folders inside dist
-        shell: cmd
+      - name: Create folder structure and placeholder files
+        shell: pwsh
         run: |
-          mkdir dist\EscapeRoomMaster\data
-          mkdir dist\EscapeRoomMaster\media\videos
-          mkdir dist\EscapeRoomMaster\media\audio
-          mkdir dist\EscapeRoomMaster\media\images
+          New-Item -ItemType Directory -Force "dist/EscapeRoomMaster/data"
+          New-Item -ItemType Directory -Force "dist/EscapeRoomMaster/media/videos"
+          New-Item -ItemType Directory -Force "dist/EscapeRoomMaster/media/audio"
+          New-Item -ItemType Directory -Force "dist/EscapeRoomMaster/media/images"
+          "Drop your escape_rooms.db file into this folder. The app will load it automatically." | Out-File -FilePath "dist/EscapeRoomMaster/data/PUT_DATABASE_HERE.txt" -Encoding utf8
+          "Put videos in media/videos, audio in media/audio, images in media/images." | Out-File -FilePath "dist/EscapeRoomMaster/media/PUT_MEDIA_FILES_HERE.txt" -Encoding utf8
 
       - name: Zip the app folder
         shell: pwsh
-        run: Compress-Archive -Path dist\EscapeRoomMaster\* -DestinationPath EscapeRoomMaster-windows.zip
+        run: Compress-Archive -Path "dist/EscapeRoomMaster/*" -DestinationPath "EscapeRoomMaster-windows.zip"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          name: "Build #${{ github.run_number }}"
+          name: Build ${{ github.run_number }}
           body: |
             Automated Windows build from commit ${{ github.sha }}.
 
-            **How to install:**
-            1. Download and unzip `EscapeRoomMaster-windows.zip`
-            2. Put your videos/audio/images in the `media/` subfolders
-            3. Run `EscapeRoomMaster.exe`
-            4. Your database lives in `data/` — copy the whole folder to move to another PC
+            How to install:
+            1. Download and unzip EscapeRoomMaster-windows.zip
+            2. Drop your escape_rooms.db into the data/ folder
+            3. Put videos/audio/images in the media/ subfolders
+            4. Run EscapeRoomMaster.exe
           files: EscapeRoomMaster-windows.zip
           make_latest: true
