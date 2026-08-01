@@ -1,78 +1,108 @@
-"""Padlock-styled widgets used for the clue tracker."""
+"""Clue-counter widgets used in the Control Panel and player window."""
 
 from PyQt6.QtCore import QRectF, Qt
-from PyQt6.QtGui import QColor, QPainter, QPen
+from PyQt6.QtGui import QColor, QPainter, QPainterPath
 from PyQt6.QtWidgets import QPushButton, QWidget
 
-from erm.theme import (
-    LOCK_LOCKED_BG,
-    LOCK_LOCKED_FG,
-    LOCK_UNLOCKED_BG,
-    LOCK_UNLOCKED_FG,
-    PLAYER_LOCK_PENDING_COLOR,
-    PLAYER_LOCK_USED_COLOR,
-)
+from erm.theme import PLAYER_LOCK_PENDING_COLOR, PLAYER_LOCK_USED_COLOR
+
+
+def _draw_bulb(painter: QPainter, cx: float, cy: float, w: float, color: QColor, glow: bool) -> None:
+    """Draw a simple lightbulb centred at (cx, cy) within a square of width w."""
+    # Proportions relative to w
+    bulb_r   = w * 0.30
+    cap_w    = w * 0.38
+    cap_h    = w * 0.14
+    base_w   = w * 0.28
+    base_h   = w * 0.08
+    # Vertical layout: bulb centre at top third, cap below, base below that
+    bulb_cy  = cy - w * 0.10
+    cap_top  = bulb_cy + bulb_r * 0.68
+    base_top = cap_top + cap_h + w * 0.01
+
+    if glow:
+        halo = QColor(color)
+        halo.setAlpha(35)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(halo)
+        painter.drawEllipse(QRectF(cx - bulb_r * 1.55, bulb_cy - bulb_r * 1.55,
+                                   bulb_r * 3.1, bulb_r * 3.1))
+
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(color)
+
+    # Bulb (circle)
+    painter.drawEllipse(QRectF(cx - bulb_r, bulb_cy - bulb_r, bulb_r * 2, bulb_r * 2))
+
+    # Cap (trapezoid base of the bulb)
+    painter.drawRoundedRect(
+        QRectF(cx - cap_w / 2, cap_top, cap_w, cap_h),
+        w * 0.04, w * 0.04,
+    )
+
+    # Base tip
+    painter.drawRoundedRect(
+        QRectF(cx - base_w / 2, base_top, base_w, base_h),
+        w * 0.03, w * 0.03,
+    )
 
 
 class ClueLockButton(QPushButton):
-    """Checkable padlock button for the Control Panel's clue tracker.
+    """Checkable lightbulb button for the Control Panel's clue tracker.
 
-    Checked = unlocked (open green padlock), unchecked = locked (closed
-    gray padlock).  The icon is painted via QPainter so it renders on all
-    platforms without relying on emoji fonts.
+    Unchecked = clue available (amber glow).
+    Checked   = clue used / given out (dim gray).
     """
 
-    def __init__(self, label: str = "", parent=None):
-        super().__init__(parent)
+    def __init__(self, number: int = 1, parent=None):
+        super().__init__("", parent)
+        self._number = number
         self.setCheckable(True)
-        self.setToolTip(label)
-        self.setFixedSize(40, 40)
+        self.setFixedSize(46, 46)
+        self.setToolTip(f"Clue {number} — click when used")
         self._refresh_style()
         self.toggled.connect(self._refresh_style)
 
     def _refresh_style(self) -> None:
-        bg, fg = (LOCK_UNLOCKED_BG, LOCK_UNLOCKED_FG) if self.isChecked() else (LOCK_LOCKED_BG, LOCK_LOCKED_FG)
-        self.setStyleSheet(
-            f"QPushButton {{ background-color: {bg}; border-radius: 8px; }}"
-        )
+        if self.isChecked():
+            self.setStyleSheet("""
+                QPushButton {
+                    background-color: #111114;
+                    border: 1px solid #1E1E26;
+                    border-radius: 10px;
+                }
+            """)
+        else:
+            self.setStyleSheet("""
+                QPushButton {
+                    background-color: #1C1408;
+                    border: 1px solid #3D2E10;
+                    border-radius: 10px;
+                }
+                QPushButton:hover {
+                    background-color: #26190A;
+                    border-color: #5A4418;
+                }
+            """)
         self.update()
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
-
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        color = QColor(LOCK_UNLOCKED_FG if self.isChecked() else LOCK_LOCKED_FG)
+
         w, h = self.width(), self.height()
+        color = QColor("#C9952A") if not self.isChecked() else QColor("#2A2A38")
 
-        pen = QPen(color)
-        pen.setWidthF(w * 0.12)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-
-        if self.isChecked():
-            # Open lock: shackle swung up and to the right
-            shackle = QRectF(w * 0.36, h * 0.02, w * 0.48, h * 0.48)
-            painter.drawArc(shackle, 0, 200 * 16)
-        else:
-            # Closed lock: centered semicircle sitting on the body
-            shackle = QRectF(w * 0.24, h * 0.05, w * 0.48, h * 0.48)
-            painter.drawArc(shackle, 0, 180 * 16)
-
-        # Lock body
-        body = QRectF(w * 0.13, h * 0.44, w * 0.68, h * 0.44)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(color)
-        painter.drawRoundedRect(body, w * 0.10, w * 0.10)
+        _draw_bulb(painter, w / 2, h / 2, min(w, h) * 0.92,
+                   color, glow=not self.isChecked())
         painter.end()
 
 
 class PlayerClueIcon(QWidget):
-    """Read-only flat padlock icon for the player window's clue tracker.
+    """Lightbulb icon for the player window's clue tracker.
 
-    Dim olive while a clue hasn't been revealed yet; once the game master
-    ticks it, it switches to bright gold to look "used"/found.
+    Amber while available; dim gray once the clue has been given out.
     """
 
     def __init__(self, parent=None):
@@ -92,19 +122,10 @@ class PlayerClueIcon(QWidget):
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        color = QColor(PLAYER_LOCK_USED_COLOR if self._checked else PLAYER_LOCK_PENDING_COLOR)
 
         w, h = self.width(), self.height()
-        shackle = QRectF(w * 0.28, h * 0.06, w * 0.44, h * 0.52)
-        body = QRectF(w * 0.18, h * 0.42, w * 0.64, h * 0.46)
+        color = QColor(PLAYER_LOCK_USED_COLOR if self._checked else PLAYER_LOCK_PENDING_COLOR)
 
-        pen = QPen(color)
-        pen.setWidthF(w * 0.1)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawArc(shackle, 0, 180 * 16)
-
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(color)
-        painter.drawRoundedRect(body, w * 0.08, w * 0.08)
+        _draw_bulb(painter, w / 2, h / 2, min(w, h) * 0.88,
+                   color, glow=not self._checked)
+        painter.end()

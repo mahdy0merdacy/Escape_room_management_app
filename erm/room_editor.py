@@ -1,17 +1,19 @@
-"""Room template editor: rooms, objectives, hints, clues and the
-intro/checkpoint/ending video paths. All edits write straight through to
-the database, so nothing is lost if the dialog is just closed.
+"""Room Setup dialog: name/duration, puzzles (objectives + hints), clue
+counter slots, and all media files.  All edits write straight through to the
+database — nothing is lost if the dialog is just closed.
 """
 
 from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
-    QGroupBox,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -21,70 +23,131 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from erm import database
-from PyQt6.QtWidgets import QComboBox
 from erm.constants import AUDIO_FILE_FILTER, IMAGE_FILE_FILTER, MEDIA_FILE_FILTER, RATING_MAX, VIDEO_FILE_FILTER
+from erm.paths import to_portable_path
+from erm.theme import CONTROL_PANEL_STYLE
 from erm.widgets.rating import RatingDots
 
 
-def _video_label_text(path: Optional[str]) -> str:
-    return Path(path).name if path else "(none)"
+def _filename(path: Optional[str]) -> str:
+    return Path(path).name if path else "No file selected"
 
+
+def _section_label(text: str) -> QLabel:
+    lbl = QLabel(text)
+    lbl.setStyleSheet(
+        "font-size: 11px; font-weight: 700; letter-spacing: 1.2px; "
+        "color: #6B6A80; text-transform: uppercase; padding-top: 6px;"
+    )
+    return lbl
+
+
+def _caption(text: str) -> QLabel:
+    lbl = QLabel(text)
+    lbl.setWordWrap(True)
+    lbl.setStyleSheet("color: #6B6A80; font-size: 12px;")
+    return lbl
+
+
+def _file_row(label: str, file_filter: str, on_browse, on_clear) -> tuple[QHBoxLayout, QLabel]:
+    """Return a (layout, file_label) for a single browse/clear file row."""
+    row = QHBoxLayout()
+    row.setSpacing(6)
+    name_lbl = QLabel("No file selected")
+    name_lbl.setStyleSheet(
+        "background: #060607; border: 1px solid #2A2A34; border-radius: 6px; "
+        "padding: 6px 10px; color: #8A8896; font-size: 12px;"
+    )
+    name_lbl.setMinimumWidth(160)
+    row.addWidget(name_lbl, stretch=1)
+    browse_btn = QPushButton("Browse…")
+    browse_btn.setFixedWidth(80)
+    browse_btn.clicked.connect(on_browse)
+    row.addWidget(browse_btn)
+    clear_btn = QPushButton("Clear")
+    clear_btn.setFixedWidth(56)
+    clear_btn.clicked.connect(on_clear)
+    row.addWidget(clear_btn)
+    return row, name_lbl
+
+
+def _set_file_label(lbl: QLabel, path: Optional[str]) -> None:
+    if path:
+        lbl.setText(Path(path).name)
+        lbl.setToolTip(path)
+        lbl.setStyleSheet(
+            "background: #060607; border: 1px solid #2A2A34; border-radius: 6px; "
+            "padding: 6px 10px; color: #C8C6D0; font-size: 12px;"
+        )
+    else:
+        lbl.setText("No file selected")
+        lbl.setToolTip("")
+        lbl.setStyleSheet(
+            "background: #060607; border: 1px solid #2A2A34; border-radius: 6px; "
+            "padding: 6px 10px; color: #8A8896; font-size: 12px;"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Hint editor
+# ---------------------------------------------------------------------------
 
 class HintEditorDialog(QDialog):
-    """Add/edit a single hint: its text, a 0-N rating, and an optional video
-    the game master can play in the player window when giving this hint."""
+    """Add or edit a single prepared hint: text, difficulty, and an optional
+    video that plays in the player window when the hint is given."""
 
-    def __init__(
-        self,
-        parent=None,
-        text: str = "",
-        rating: int = 0,
-        video_path: Optional[str] = None,
-    ):
+    def __init__(self, parent=None, text: str = "", rating: int = 0,
+                 video_path: Optional[str] = None):
         super().__init__(parent)
-        self.setWindowTitle("Clue / Hint")
+        self.setWindowTitle("Edit Hint" if text else "Add Hint")
+        self.setMinimumWidth(460)
         self._video_path = video_path
         self._build_ui()
-        self.text_edit.setText(text)
+        self.text_edit.setPlainText(text)
         self.rating_spin.setValue(rating)
-        self._update_video_label()
+        self._on_rating_changed(rating)
+        _set_file_label(self._video_lbl, video_path)
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(20, 16, 20, 16)
 
-        layout.addWidget(QLabel("Text:"))
-        self.text_edit = QLineEdit()
+        layout.addWidget(_section_label("What to say to the players"))
+        self.text_edit = QPlainTextEdit()
+        self.text_edit.setPlaceholderText("Type the hint text here…")
+        self.text_edit.setFixedHeight(90)
         layout.addWidget(self.text_edit)
 
-        rating_row = QHBoxLayout()
-        rating_row.addWidget(QLabel("Rating:"))
+        diff_row = QHBoxLayout()
+        diff_row.addWidget(_section_label("Difficulty"))
         self.rating_spin = QSpinBox()
         self.rating_spin.setRange(0, RATING_MAX)
+        self.rating_spin.setFixedWidth(52)
         self.rating_spin.valueChanged.connect(self._on_rating_changed)
-        rating_row.addWidget(self.rating_spin)
+        diff_row.addWidget(self.rating_spin)
         self.rating_preview = RatingDots(0)
-        rating_row.addWidget(self.rating_preview)
-        rating_row.addStretch(1)
-        layout.addLayout(rating_row)
+        diff_row.addWidget(self.rating_preview)
+        diff_row.addWidget(_caption("0 = easy   •   5 = hardest"))
+        diff_row.addStretch(1)
+        layout.addLayout(diff_row)
 
-        video_group = QGroupBox("Video (optional, played in the player window)")
-        video_layout = QHBoxLayout(video_group)
-        self.video_label = QLabel("(none)")
-        video_layout.addWidget(self.video_label, stretch=1)
-        browse_btn = QPushButton("Browse...")
-        browse_btn.clicked.connect(self._browse_video)
-        video_layout.addWidget(browse_btn)
-        clear_btn = QPushButton("Clear")
-        clear_btn.clicked.connect(self._clear_video)
-        video_layout.addWidget(clear_btn)
-        layout.addWidget(video_group)
+        layout.addWidget(_section_label("Video / Audio (optional)"))
+        layout.addWidget(_caption("Plays in the player window when you give this hint."))
+        vid_row, self._video_lbl = _file_row(
+            "Video", MEDIA_FILE_FILTER, self._browse_video, self._clear_video
+        )
+        layout.addLayout(vid_row)
 
+        layout.addSpacing(4)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -98,109 +161,241 @@ class HintEditorDialog(QDialog):
     def _browse_video(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Select Hint Video / Audio", "", MEDIA_FILE_FILTER)
         if path:
+            path = to_portable_path(path)
             self._video_path = path
-            self._update_video_label()
+            _set_file_label(self._video_lbl, path)
 
     def _clear_video(self) -> None:
         self._video_path = None
-        self._update_video_label()
-
-    def _update_video_label(self) -> None:
-        self.video_label.setText(_video_label_text(self._video_path))
-        self.video_label.setToolTip(self._video_path or "")
+        _set_file_label(self._video_lbl, None)
 
     def values(self) -> tuple[str, int, Optional[str]]:
-        return self.text_edit.text().strip(), self.rating_spin.value(), self._video_path
+        return self.text_edit.toPlainText().strip(), self.rating_spin.value(), self._video_path
 
+
+# ---------------------------------------------------------------------------
+# Collapsible hint card
+# ---------------------------------------------------------------------------
+
+class _HintCard(QFrame):
+    """A compact card for one hint. Shows text + rating always; expands to
+    reveal edit / delete / reorder controls when the header is clicked."""
+
+    def __init__(self, hint, on_edit, on_delete, on_up, on_down, parent=None):
+        super().__init__(parent)
+        self._expanded = False
+        self.setObjectName("hintCard")
+        self.setStyleSheet("""
+            QFrame#hintCard {
+                background: #1A1A20;
+                border: 1px solid #2A2A34;
+                border-radius: 8px;
+            }
+            QFrame#hintCardDetail {
+                background: #131316;
+                border: none;
+                border-top: 1px solid #2A2A34;
+                border-bottom-left-radius: 8px;
+                border-bottom-right-radius: 8px;
+            }
+        """)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # ── Header (always visible) ────────────────────────────────────────
+        header = QWidget()
+        header.setCursor(Qt.CursorShape.PointingHandCursor)
+        header_row = QHBoxLayout(header)
+        header_row.setContentsMargins(12, 10, 12, 10)
+        header_row.setSpacing(10)
+
+        self._arrow = QLabel("▶")
+        self._arrow.setFixedWidth(14)
+        self._arrow.setStyleSheet("color: #55546A; font-size: 11px; background: transparent;")
+        header_row.addWidget(self._arrow)
+
+        text_lbl = QLabel(hint.text)
+        text_lbl.setWordWrap(False)
+        text_lbl.setStyleSheet("color: #C8C6D0; font-size: 13px; background: transparent;")
+        header_row.addWidget(text_lbl, stretch=1)
+
+        header_row.addWidget(RatingDots(hint.rating))
+
+        if hint.video_path:
+            vid_lbl = QLabel("▶ video")
+            vid_lbl.setStyleSheet("color: #94A8C4; font-size: 11px; background: transparent;")
+            vid_lbl.setToolTip(hint.video_path)
+            header_row.addWidget(vid_lbl)
+
+        outer.addWidget(header)
+
+        # ── Detail panel (hidden until expanded) ──────────────────────────
+        self._detail = QFrame()
+        self._detail.setObjectName("hintCardDetail")
+        detail_row = QHBoxLayout(self._detail)
+        detail_row.setContentsMargins(38, 8, 12, 10)
+        detail_row.setSpacing(8)
+
+        full_lbl = QLabel(hint.text)
+        full_lbl.setWordWrap(True)
+        full_lbl.setStyleSheet("color: #A8A6B0; font-size: 12px; background: transparent;")
+        detail_row.addWidget(full_lbl, stretch=1)
+
+        for label, callback, style in (
+            ("Edit",   on_edit,   ""),
+            ("Delete", on_delete, "color: #F87171; border-color: #3D2020;"),
+        ):
+            btn = QPushButton(label)
+            btn.setFixedHeight(30)
+            btn.setMinimumWidth(64)
+            if style:
+                btn.setStyleSheet(f"QPushButton {{ {style} }}")
+            btn.clicked.connect(callback)
+            detail_row.addWidget(btn)
+
+        up_btn = QPushButton("↑")
+        up_btn.setFixedSize(30, 30)
+        up_btn.clicked.connect(on_up)
+        detail_row.addWidget(up_btn)
+
+        down_btn = QPushButton("↓")
+        down_btn.setFixedSize(30, 30)
+        down_btn.clicked.connect(on_down)
+        detail_row.addWidget(down_btn)
+
+        self._detail.setVisible(False)
+        outer.addWidget(self._detail)
+
+        header.mousePressEvent = lambda _: self._toggle()
+
+    def _toggle(self) -> None:
+        self._expanded = not self._expanded
+        self._detail.setVisible(self._expanded)
+        self._arrow.setText("▼" if self._expanded else "▶")
+
+
+# ---------------------------------------------------------------------------
+# Objective (puzzle) editor
+# ---------------------------------------------------------------------------
 
 class ObjectiveEditorDialog(QDialog):
-    """Edit a single objective: title, code, description, checkpoint video,
-    and its rated clue/hint cards."""
+    """Set up a single puzzle: its title, answer code, GM notes,
+    a checkpoint video that plays when it's solved, and its prepared hints."""
 
     def __init__(self, objective_id: int, parent=None):
         super().__init__(parent)
         self.objective_id = objective_id
-        self.setWindowTitle("Edit Objective")
-        self.resize(560, 620)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.Window)
+        self.setStyleSheet(CONTROL_PANEL_STYLE)
+        self.setMinimumWidth(580)
+        self.resize(640, 640)
         self._build_ui()
         self._load()
+        screen = QGuiApplication.primaryScreen().availableGeometry()
+        self.move(
+            screen.x() + (screen.width() - self.width()) // 2,
+            screen.y() + max(10, (screen.height() - self.height()) // 2),
+        )
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(20, 16, 20, 16)
 
-        title_row = QHBoxLayout()
-        title_row.addWidget(QLabel("Title:"))
+        # Title + code on one row
+        top_row = QHBoxLayout()
+        top_row.setSpacing(12)
+        title_col = QVBoxLayout()
+        title_col.addWidget(_section_label("Puzzle Name"))
         self.title_edit = QLineEdit()
+        self.title_edit.setPlaceholderText("e.g. Find the hidden key")
         self.title_edit.editingFinished.connect(self._on_title_edited)
-        title_row.addWidget(self.title_edit, stretch=1)
-        title_row.addWidget(QLabel("Code:"))
+        title_col.addWidget(self.title_edit)
+        top_row.addLayout(title_col, stretch=3)
+
+        code_col = QVBoxLayout()
+        code_col.addWidget(_section_label("Answer Code"))
         self.code_edit = QLineEdit()
         self.code_edit.setPlaceholderText("e.g. 1279")
-        self.code_edit.setMaximumWidth(120)
+        self.code_edit.setToolTip("The code or answer players need to find for this puzzle")
         self.code_edit.editingFinished.connect(self._on_code_edited)
-        title_row.addWidget(self.code_edit)
-        layout.addLayout(title_row)
+        code_col.addWidget(self.code_edit)
+        top_row.addLayout(code_col, stretch=1)
+        layout.addLayout(top_row)
 
-        layout.addWidget(QLabel("Description (shown to the game master in the Control Panel):"))
+        # GM notes
+        layout.addWidget(_section_label("Game Master Notes"))
+        layout.addWidget(_caption("Private notes only you see in the Control Panel."))
         self.description_edit = QPlainTextEdit()
-        self.description_edit.setMaximumHeight(80)
+        self.description_edit.setPlaceholderText("Optional notes for the game master…")
+        self.description_edit.setFixedHeight(60)
         self.description_edit.textChanged.connect(self._on_description_edited)
         layout.addWidget(self.description_edit)
 
-        video_group = QGroupBox("Checkpoint Video (reward shown when this objective is solved)")
-        video_layout = QHBoxLayout(video_group)
-        self.video_label = QLabel("(none)")
-        video_layout.addWidget(self.video_label, stretch=1)
-        browse_btn = QPushButton("Browse...")
-        browse_btn.clicked.connect(self._browse_checkpoint_video)
-        video_layout.addWidget(browse_btn)
-        clear_btn = QPushButton("Clear")
-        clear_btn.clicked.connect(self._clear_checkpoint_video)
-        video_layout.addWidget(clear_btn)
-        layout.addWidget(video_group)
-
-        hints_group = QGroupBox(
-            "Clues / Hints (rating + optional video, shown live in the Control Panel)"
+        # Checkpoint video
+        layout.addWidget(_section_label("Checkpoint Video"))
+        layout.addWidget(_caption("Plays automatically in the player window when you mark this puzzle solved."))
+        vid_row, self._video_lbl = _file_row(
+            "Video", MEDIA_FILE_FILTER, self._browse_checkpoint_video, self._clear_checkpoint_video
         )
-        hints_layout = QVBoxLayout(hints_group)
-        self.hints_list = QListWidget()
-        self.hints_list.itemDoubleClicked.connect(lambda _: self._edit_hint())
-        hints_layout.addWidget(self.hints_list)
-        hint_btn_row = QHBoxLayout()
-        for label, handler in (
-            ("Add", self._add_hint),
-            ("Edit", self._edit_hint),
-            ("Delete", self._delete_hint),
-            ("Up", self._move_hint_up),
-            ("Down", self._move_hint_down),
-        ):
-            btn = QPushButton(label)
-            btn.clicked.connect(handler)
-            hint_btn_row.addWidget(btn)
-        hints_layout.addLayout(hint_btn_row)
-        layout.addWidget(hints_group)
+        layout.addLayout(vid_row)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
-        buttons.accepted.connect(self.accept)
-        layout.addWidget(buttons)
+        # Hints — collapsible cards
+        layout.addSpacing(6)
+        hints_header_row = QHBoxLayout()
+        hints_header_row.addWidget(_section_label("Prepared Hints"))
+        hints_header_row.addStretch(1)
+        add_btn = QPushButton("+ Add Hint")
+        add_btn.setMinimumHeight(32)
+        add_btn.setMinimumWidth(100)
+        add_btn.clicked.connect(self._add_hint)
+        hints_header_row.addWidget(add_btn)
+        layout.addLayout(hints_header_row)
+        layout.addWidget(_caption("Click a hint to expand it and edit or delete it."))
+
+        self._hints_scroll = QScrollArea()
+        self._hints_scroll.setWidgetResizable(True)
+        self._hints_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._hints_scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        self._hints_container = QWidget()
+        self._hints_container.setStyleSheet("background: transparent;")
+        self._hints_layout = QVBoxLayout(self._hints_container)
+        self._hints_layout.setContentsMargins(0, 0, 0, 0)
+        self._hints_layout.setSpacing(6)
+        self._hints_layout.addStretch(1)
+
+        self._hints_scroll.setWidget(self._hints_container)
+        layout.addWidget(self._hints_scroll, stretch=1)
+
+        layout.addSpacing(4)
+        close_btn = QPushButton("Close")
+        close_btn.setObjectName("primaryButton")
+        close_btn.setMinimumHeight(38)
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
 
     def _load(self) -> None:
-        objective = database.get_objective(self.objective_id)
-        if objective is None:
+        obj = database.get_objective(self.objective_id)
+        if obj is None:
             return
-        self.title_edit.setText(objective.title)
-        self.code_edit.setText(objective.code or "")
+        self.setWindowTitle(f"Puzzle Setup — {obj.title}")
+        self.title_edit.setText(obj.title)
+        self.code_edit.setText(obj.code or "")
         self.description_edit.blockSignals(True)
-        self.description_edit.setPlainText(objective.description or "")
+        self.description_edit.setPlainText(obj.description or "")
         self.description_edit.blockSignals(False)
-        self.video_label.setText(_video_label_text(objective.checkpoint_video_path))
-        self.video_label.setToolTip(objective.checkpoint_video_path or "")
+        _set_file_label(self._video_lbl, obj.checkpoint_video_path)
         self._refresh_hints()
 
     def _on_title_edited(self) -> None:
         title = self.title_edit.text().strip()
         if title:
             database.update_objective(self.objective_id, title=title)
+            self.setWindowTitle(f"Puzzle Setup — {title}")
 
     def _on_code_edited(self) -> None:
         database.update_objective(self.objective_id, code=self.code_edit.text().strip() or None)
@@ -211,575 +406,534 @@ class ObjectiveEditorDialog(QDialog):
         )
 
     def _browse_checkpoint_video(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select Checkpoint Video / Audio", "", MEDIA_FILE_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, "Select Checkpoint Video", "", MEDIA_FILE_FILTER)
         if path:
+            path = to_portable_path(path)
             database.update_objective(self.objective_id, checkpoint_video_path=path)
-            self.video_label.setText(_video_label_text(path))
-            self.video_label.setToolTip(path)
+            _set_file_label(self._video_lbl, path)
 
     def _clear_checkpoint_video(self) -> None:
         database.update_objective(self.objective_id, checkpoint_video_path=None)
-        self.video_label.setText("(none)")
-        self.video_label.setToolTip("")
+        _set_file_label(self._video_lbl, None)
 
-    # ------------------------------------------------------------------
-    # Hints / clue cards
-    # ------------------------------------------------------------------
+    def _refresh_hints(self) -> None:
+        # Remove all cards but keep the trailing stretch
+        while self._hints_layout.count() > 1:
+            item = self._hints_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
 
-    def _build_hint_item_widget(self, hint) -> QWidget:
-        widget = QWidget()
-        item_layout = QHBoxLayout(widget)
-        item_layout.setContentsMargins(6, 4, 6, 4)
-        text_label = QLabel(hint.text)
-        text_label.setWordWrap(True)
-        item_layout.addWidget(text_label, stretch=1)
-        item_layout.addWidget(RatingDots(hint.rating))
-        if hint.video_path:
-            video_label = QLabel("[vid]")
-            video_label.setToolTip(hint.video_path)
-            item_layout.addWidget(video_label)
-        return widget
-
-    def _refresh_hints(self, select_id: Optional[int] = None) -> None:
-        self.hints_list.clear()
         for hint in database.list_hints(self.objective_id):
-            item = QListWidgetItem()
-            item.setData(Qt.ItemDataRole.UserRole, hint.id)
-            self.hints_list.addItem(item)
-            widget = self._build_hint_item_widget(hint)
-            item.setSizeHint(widget.sizeHint())
-            self.hints_list.setItemWidget(item, widget)
-            if hint.id == select_id:
-                self.hints_list.setCurrentItem(item)
+            card = _HintCard(
+                hint,
+                on_edit=lambda _, h=hint: self._edit_hint(h.id),
+                on_delete=lambda _, h=hint: self._delete_hint(h.id),
+                on_up=lambda _, h=hint: self._move_hint(h.id, -1),
+                on_down=lambda _, h=hint: self._move_hint(h.id, 1),
+            )
+            self._hints_layout.insertWidget(self._hints_layout.count() - 1, card)
 
-    def _selected_hint_id(self) -> Optional[int]:
-        item = self.hints_list.currentItem()
-        return item.data(Qt.ItemDataRole.UserRole) if item else None
+        if self._hints_layout.count() == 1:
+            empty = QLabel("No hints yet — click + Add Hint to get started.")
+            empty.setStyleSheet("color: #55546A; font-size: 12px; padding: 12px;")
+            self._hints_layout.insertWidget(0, empty)
 
     def _add_hint(self) -> None:
-        dialog = HintEditorDialog(parent=self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            text, rating, video_path = dialog.values()
+        dlg = HintEditorDialog(parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            text, rating, video_path = dlg.values()
             if text:
-                new_id = database.add_hint(self.objective_id, text, rating=rating, video_path=video_path)
-                self._refresh_hints(select_id=new_id)
+                database.add_hint(self.objective_id, text, rating=rating, video_path=video_path)
+                self._refresh_hints()
 
-    def _edit_hint(self) -> None:
-        hint_id = self._selected_hint_id()
-        if hint_id is None:
-            return
+    def _edit_hint(self, hint_id: int) -> None:
         hint = next((h for h in database.list_hints(self.objective_id) if h.id == hint_id), None)
         if hint is None:
             return
-        dialog = HintEditorDialog(
-            parent=self, text=hint.text, rating=hint.rating, video_path=hint.video_path
-        )
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            text, rating, video_path = dialog.values()
+        dlg = HintEditorDialog(parent=self, text=hint.text, rating=hint.rating, video_path=hint.video_path)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            text, rating, video_path = dlg.values()
             if text:
                 database.update_hint(hint_id, text=text, rating=rating, video_path=video_path)
-                self._refresh_hints(select_id=hint_id)
+                self._refresh_hints()
 
-    def _delete_hint(self) -> None:
-        hint_id = self._selected_hint_id()
-        if hint_id is None:
-            return
+    def _delete_hint(self, hint_id: int) -> None:
         database.delete_hint(hint_id)
         self._refresh_hints()
 
-    def _move_hint_up(self) -> None:
-        hint_id = self._selected_hint_id()
-        if hint_id is None:
-            return
-        database.move_hint(hint_id, -1)
-        self._refresh_hints(select_id=hint_id)
+    def _move_hint(self, hint_id: int, direction: int) -> None:
+        database.move_hint(hint_id, direction)
+        self._refresh_hints()
 
-    def _move_hint_down(self) -> None:
-        hint_id = self._selected_hint_id()
-        if hint_id is None:
-            return
-        database.move_hint(hint_id, 1)
-        self._refresh_hints(select_id=hint_id)
 
+# ---------------------------------------------------------------------------
+# Main room setup dialog
+# ---------------------------------------------------------------------------
 
 class RoomEditorDialog(QDialog):
-    """Edit a room template: name, duration, briefing/ending videos,
-    objectives (with code, description, hints + checkpoint video) and the
-    clue tracker list.
-    """
+    """Room Setup — all configuration for a room in one tabbed dialog."""
 
     def __init__(self, room_id: int, parent=None):
         super().__init__(parent)
         self.room_id = room_id
-        self.setWindowTitle("Edit Room")
-        self.resize(800, 650)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.Window)
+        self.setStyleSheet(CONTROL_PANEL_STYLE)
+        self.setMinimumSize(720, 520)
+        self.resize(800, 580)
         self._build_ui()
         self._load()
+        self._center_on_screen()
+
+    def _center_on_screen(self) -> None:
+        screen = QGuiApplication.primaryScreen().availableGeometry()
+        x = screen.x() + (screen.width() - self.width()) // 2
+        y = screen.y() + max(10, (screen.height() - self.height()) // 2)
+        self.move(x, y)
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        name_row = QHBoxLayout()
-        name_row.addWidget(QLabel("Room name:"))
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._build_puzzles_tab(),      "  Puzzles  ")
+        self.tabs.addTab(self._build_clue_counter_tab(), "  Clue Counter  ")
+        self.tabs.addTab(self._build_media_tab(),        "  Media  ")
+        self.tabs.addTab(self._build_general_tab(),      "  Settings  ")
+        root.addWidget(self.tabs, stretch=1)
+
+        footer = QWidget()
+        footer.setObjectName("roomEditorFooter")
+        footer.setStyleSheet(
+            "QWidget#roomEditorFooter { background: #0A0A0B; border-top: 1px solid #2A2A34; }"
+        )
+        footer_row = QHBoxLayout(footer)
+        footer_row.setContentsMargins(16, 10, 16, 10)
+        footer_row.addStretch(1)
+        done_btn = QPushButton("Done")
+        done_btn.setObjectName("primaryButton")
+        done_btn.setMinimumWidth(100)
+        done_btn.setMinimumHeight(38)
+        done_btn.clicked.connect(self.accept)
+        footer_row.addWidget(done_btn)
+        root.addWidget(footer)
+
+    # -----------------------------------------------------------------------
+    # Tab 1 — General
+    # -----------------------------------------------------------------------
+
+    def _build_general_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(14)
+
+        layout.addWidget(_section_label("Room Name"))
         self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("e.g. Stranger Things")
         self.name_edit.editingFinished.connect(self._on_name_edited)
-        name_row.addWidget(self.name_edit)
-        name_row.addWidget(QLabel("Duration (minutes):"))
+        layout.addWidget(self.name_edit)
+
+        dur_row = QHBoxLayout()
+        dur_col = QVBoxLayout()
+        dur_col.addWidget(_section_label("Session Duration (minutes)"))
         self.duration_spin = QSpinBox()
         self.duration_spin.setRange(1, 600)
+        self.duration_spin.setFixedWidth(100)
         self.duration_spin.editingFinished.connect(self._on_duration_changed)
-        name_row.addWidget(self.duration_spin)
-        name_row.addWidget(QLabel("Website slug:"))
+        dur_col.addWidget(self.duration_spin)
+        dur_row.addLayout(dur_col)
+        dur_row.addSpacing(24)
+
+        slug_col = QVBoxLayout()
+        slug_col.addWidget(_section_label("Website Room ID"))
+        slug_col.addWidget(_caption("Links this room to your online booking system for leaderboard tracking."))
         self.slug_combo = QComboBox()
         self.slug_combo.addItems(["(none)", "annabelle", "stranger-things", "breaking-bad"])
         self.slug_combo.currentTextChanged.connect(self._on_slug_changed)
-        name_row.addWidget(self.slug_combo)
-        layout.addLayout(name_row)
+        slug_col.addWidget(self.slug_combo)
+        dur_row.addLayout(slug_col, stretch=1)
+        layout.addLayout(dur_row)
 
-        video_group = QGroupBox("Videos")
-        video_layout = QVBoxLayout(video_group)
+        layout.addStretch(1)
+        return page
 
-        intro_row = QHBoxLayout()
-        intro_row.addWidget(QLabel("Briefing video (English):"))
-        self.intro_label = QLabel("(none)")
-        intro_row.addWidget(self.intro_label, stretch=1)
-        intro_browse = QPushButton("Browse...")
-        intro_browse.clicked.connect(self._browse_intro_video)
-        intro_row.addWidget(intro_browse)
-        intro_clear = QPushButton("Clear")
-        intro_clear.clicked.connect(self._clear_intro_video)
-        intro_row.addWidget(intro_clear)
-        video_layout.addLayout(intro_row)
+    # -----------------------------------------------------------------------
+    # Tab 2 — Puzzles
+    # -----------------------------------------------------------------------
 
-        intro_fr_row = QHBoxLayout()
-        intro_fr_row.addWidget(QLabel("Briefing video (French):"))
-        self.intro_fr_label = QLabel("(none)")
-        intro_fr_row.addWidget(self.intro_fr_label, stretch=1)
-        intro_fr_browse = QPushButton("Browse...")
-        intro_fr_browse.clicked.connect(self._browse_intro_video_fr)
-        intro_fr_row.addWidget(intro_fr_browse)
-        intro_fr_clear = QPushButton("Clear")
-        intro_fr_clear.clicked.connect(self._clear_intro_video_fr)
-        intro_fr_row.addWidget(intro_fr_clear)
-        video_layout.addLayout(intro_fr_row)
+    def _build_puzzles_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(10)
 
-        ending_row = QHBoxLayout()
-        ending_row.addWidget(QLabel("Ending video:"))
-        self.ending_label = QLabel("(none)")
-        ending_row.addWidget(self.ending_label, stretch=1)
-        ending_browse = QPushButton("Browse...")
-        ending_browse.clicked.connect(self._browse_ending_video)
-        ending_row.addWidget(ending_browse)
-        ending_clear = QPushButton("Clear")
-        ending_clear.clicked.connect(self._clear_ending_video)
-        ending_row.addWidget(ending_clear)
-        video_layout.addLayout(ending_row)
+        layout.addWidget(_section_label("Puzzles / Stages"))
+        layout.addWidget(_caption(
+            "Each puzzle is a stage of your room. Add prepared hints that you can send "
+            "to players from the Control Panel. Double-click a puzzle to edit its hints."
+        ))
 
-        layout.addWidget(video_group)
-
-        player_window_group = QGroupBox("Player Window")
-        player_window_layout = QVBoxLayout(player_window_group)
-
-        background_row = QHBoxLayout()
-        background_row.addWidget(QLabel("Background image:"))
-        self.background_image_label = QLabel("(none)")
-        background_row.addWidget(self.background_image_label, stretch=1)
-        background_browse = QPushButton("Browse...")
-        background_browse.clicked.connect(self._browse_background_image)
-        background_row.addWidget(background_browse)
-        background_clear = QPushButton("Clear")
-        background_clear.clicked.connect(self._clear_background_image)
-        background_row.addWidget(background_clear)
-        player_window_layout.addLayout(background_row)
-
-        layout.addWidget(player_window_group)
-
-        audio_group = QGroupBox("Audio")
-        audio_layout = QVBoxLayout(audio_group)
-
-        alert_row = QHBoxLayout()
-        alert_row.addWidget(QLabel("Custom alert sound:"))
-        self.alert_sound_label = QLabel("(none)")
-        alert_row.addWidget(self.alert_sound_label, stretch=1)
-        alert_browse = QPushButton("Browse...")
-        alert_browse.clicked.connect(self._browse_alert_sound)
-        alert_row.addWidget(alert_browse)
-        alert_clear = QPushButton("Clear")
-        alert_clear.clicked.connect(self._clear_alert_sound)
-        alert_row.addWidget(alert_clear)
-        audio_layout.addLayout(alert_row)
-
-        game_music_row = QHBoxLayout()
-        game_music_row.addWidget(QLabel("Background music (player window):"))
-        self.game_music_label = QLabel("(none)")
-        game_music_row.addWidget(self.game_music_label, stretch=1)
-        game_music_browse = QPushButton("Browse...")
-        game_music_browse.clicked.connect(self._browse_game_music)
-        game_music_row.addWidget(game_music_browse)
-        game_music_clear = QPushButton("Clear")
-        game_music_clear.clicked.connect(self._clear_game_music)
-        game_music_row.addWidget(game_music_clear)
-        audio_layout.addLayout(game_music_row)
-
-        success_row = QHBoxLayout()
-        success_row.addWidget(QLabel("Success sound:"))
-        self.success_sound_label = QLabel("(none)")
-        success_row.addWidget(self.success_sound_label, stretch=1)
-        success_browse = QPushButton("Browse...")
-        success_browse.clicked.connect(self._browse_success_sound)
-        success_row.addWidget(success_browse)
-        success_clear = QPushButton("Clear")
-        success_clear.clicked.connect(self._clear_success_sound)
-        success_row.addWidget(success_clear)
-        audio_layout.addLayout(success_row)
-
-        fail_row = QHBoxLayout()
-        fail_row.addWidget(QLabel("Fail sound:"))
-        self.fail_sound_label = QLabel("(none)")
-        fail_row.addWidget(self.fail_sound_label, stretch=1)
-        fail_browse = QPushButton("Browse...")
-        fail_browse.clicked.connect(self._browse_fail_sound)
-        fail_row.addWidget(fail_browse)
-        fail_clear = QPushButton("Clear")
-        fail_clear.clicked.connect(self._clear_fail_sound)
-        fail_row.addWidget(fail_clear)
-        audio_layout.addLayout(fail_row)
-
-        layout.addWidget(audio_group)
-
-        columns = QHBoxLayout()
-
-        objectives_group = QGroupBox("Objectives")
-        objectives_layout = QVBoxLayout(objectives_group)
         self.objectives_list = QListWidget()
         self.objectives_list.itemDoubleClicked.connect(lambda _: self._manage_objective())
-        objectives_layout.addWidget(self.objectives_list)
-        obj_btn_row = QHBoxLayout()
-        for label, handler in (
-            ("Add", self._add_objective),
-            ("Manage...", self._manage_objective),
-            ("Delete", self._delete_objective),
-            ("Up", self._move_objective_up),
-            ("Down", self._move_objective_down),
+        layout.addWidget(self.objectives_list, stretch=1)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(6)
+        for label, slot in (
+            ("+ Add Puzzle", self._add_objective),
+            ("Edit Hints…",  self._manage_objective),
+            ("Delete",       self._delete_objective),
         ):
-            btn = QPushButton(label)
-            btn.clicked.connect(handler)
-            obj_btn_row.addWidget(btn)
-        objectives_layout.addLayout(obj_btn_row)
-        columns.addWidget(objectives_group)
+            b = QPushButton(label)
+            b.setMinimumHeight(34)
+            b.setMinimumWidth(96)
+            b.clicked.connect(slot)
+            btn_row.addWidget(b)
+        btn_row.addStretch(1)
+        for label, slot in (("↑", self._move_objective_up), ("↓", self._move_objective_down)):
+            b = QPushButton(label)
+            b.setFixedSize(34, 34)
+            b.clicked.connect(slot)
+            btn_row.addWidget(b)
+        layout.addLayout(btn_row)
 
-        clues_group = QGroupBox("Clue Tracker (any number of slots)")
-        clues_layout = QVBoxLayout(clues_group)
-        self.clues_list = QListWidget()
-        self.clues_list.itemDoubleClicked.connect(lambda _: self._rename_clue())
-        clues_layout.addWidget(self.clues_list)
-        clue_btn_row = QHBoxLayout()
-        for label, handler in (
-            ("Add", self._add_clue),
-            ("Rename", self._rename_clue),
-            ("Delete", self._delete_clue),
-            ("Up", self._move_clue_up),
-            ("Down", self._move_clue_down),
-        ):
-            btn = QPushButton(label)
-            btn.clicked.connect(handler)
-            clue_btn_row.addWidget(btn)
-        clues_layout.addLayout(clue_btn_row)
-        columns.addWidget(clues_group)
+        return page
 
-        layout.addLayout(columns)
+    # -----------------------------------------------------------------------
+    # Tab 3 — Clue Counter
+    # -----------------------------------------------------------------------
 
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
-        buttons.accepted.connect(self.accept)
-        layout.addWidget(buttons)
+    def _build_clue_counter_tab(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(10)
 
-    # ------------------------------------------------------------------
+        layout.addWidget(_section_label("Number of Clues"))
+        layout.addWidget(_caption(
+            "How many clues the team is allowed to ask for during the session. "
+            "Each one appears as a button in the Control Panel — click it when a clue is used."
+        ))
+
+        count_row = QHBoxLayout()
+        count_row.setSpacing(12)
+        self.clue_count_spin = QSpinBox()
+        self.clue_count_spin.setRange(0, 20)
+        self.clue_count_spin.setFixedWidth(80)
+        self.clue_count_spin.setMinimumHeight(36)
+        self.clue_count_spin.editingFinished.connect(self._on_clue_count_changed)
+        self.clue_count_spin.valueChanged.connect(self._on_clue_count_changed)
+        count_row.addWidget(self.clue_count_spin)
+        count_row.addWidget(_caption("Set to 0 to disable the clue counter."))
+        count_row.addStretch(1)
+        layout.addLayout(count_row)
+
+        layout.addStretch(1)
+        return page
+
+    # -----------------------------------------------------------------------
+    # Tab 4 — Media
+    # -----------------------------------------------------------------------
+
+    def _build_media_tab(self) -> QWidget:
+        # Outer page is just a container for the scroll area
+        outer = QWidget()
+        outer_layout = QVBoxLayout(outer)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
+        layout = QVBoxLayout(inner)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(0)
+
+        def _row_block(caption_text, lbl_attr, file_filter, browse_fn, clear_fn):
+            layout.addWidget(_caption(caption_text))
+            row, lbl = _file_row("", file_filter, browse_fn, clear_fn)
+            setattr(self, lbl_attr, lbl)
+            layout.addLayout(row)
+            layout.addSpacing(10)
+
+        # --- Videos --------------------------------------------------------
+        layout.addWidget(_section_label("Videos"))
+        layout.addSpacing(6)
+        _row_block("Briefing — English  (plays before the game starts)",
+                   "intro_lbl", VIDEO_FILE_FILTER, self._browse_intro_video, self._clear_intro_video)
+        _row_block("Briefing — French  (optional second language)",
+                   "intro_fr_lbl", VIDEO_FILE_FILTER, self._browse_intro_video_fr, self._clear_intro_video_fr)
+        _row_block("Ending video  (plays after the team escapes)",
+                   "ending_lbl", VIDEO_FILE_FILTER, self._browse_ending_video, self._clear_ending_video)
+
+        layout.addSpacing(6)
+
+        # --- Player screen -------------------------------------------------
+        layout.addWidget(_section_label("Player Screen"))
+        layout.addSpacing(6)
+        _row_block("Background image shown behind the timer on the player screen.",
+                   "bg_lbl", IMAGE_FILE_FILTER, self._browse_background_image, self._clear_background_image)
+
+        layout.addSpacing(6)
+
+        # --- Audio ---------------------------------------------------------
+        layout.addWidget(_section_label("Audio"))
+        layout.addSpacing(6)
+        _row_block("Alert sound  (plays when you send a message to players)",
+                   "alert_lbl", AUDIO_FILE_FILTER, self._browse_alert_sound, self._clear_alert_sound)
+        _row_block("Background music  (looped on the player screen during the game)",
+                   "music_lbl", AUDIO_FILE_FILTER, self._browse_game_music, self._clear_game_music)
+        _row_block("Success sound  (plays when the team escapes)",
+                   "success_lbl", AUDIO_FILE_FILTER, self._browse_success_sound, self._clear_success_sound)
+        _row_block("Fail / time-up sound  (plays when time runs out)",
+                   "fail_lbl", AUDIO_FILE_FILTER, self._browse_fail_sound, self._clear_fail_sound)
+
+        layout.addStretch(1)
+
+        scroll.setWidget(inner)
+        outer_layout.addWidget(scroll)
+        return outer
+
+    # -----------------------------------------------------------------------
     # Loading
-    # ------------------------------------------------------------------
+    # -----------------------------------------------------------------------
 
     def _load(self) -> None:
         room = database.get_room(self.room_id)
         if room is None:
             return
+        self.setWindowTitle(f"Room Setup — {room.name}")
         self.name_edit.setText(room.name)
         self.duration_spin.setValue(max(1, room.duration_seconds // 60))
-        slug_index = self.slug_combo.findText(room.slug or "(none)")
-        self.slug_combo.setCurrentIndex(max(0, slug_index))
-        self.intro_label.setText(_video_label_text(room.intro_video_path))
-        self.intro_label.setToolTip(room.intro_video_path or "")
-        self.intro_fr_label.setText(_video_label_text(room.intro_video_path_fr))
-        self.intro_fr_label.setToolTip(room.intro_video_path_fr or "")
-        self.ending_label.setText(_video_label_text(room.ending_video_path))
-        self.ending_label.setToolTip(room.ending_video_path or "")
-        self.background_image_label.setText(_video_label_text(room.background_image_path))
-        self.background_image_label.setToolTip(room.background_image_path or "")
-        audio_settings = database.get_audio_settings(self.room_id)
-        self.alert_sound_label.setText(_video_label_text(audio_settings.alert_path))
-        self.alert_sound_label.setToolTip(audio_settings.alert_path or "")
-        self.game_music_label.setText(_video_label_text(audio_settings.game_music_path))
-        self.game_music_label.setToolTip(audio_settings.game_music_path or "")
-        self.success_sound_label.setText(_video_label_text(audio_settings.success_path))
-        self.success_sound_label.setToolTip(audio_settings.success_path or "")
-        self.fail_sound_label.setText(_video_label_text(audio_settings.fail_path))
-        self.fail_sound_label.setToolTip(audio_settings.fail_path or "")
-        self._refresh_objectives()
-        self._refresh_clues()
+        idx = self.slug_combo.findText(room.slug or "(none)")
+        self.slug_combo.setCurrentIndex(max(0, idx))
 
-    # ------------------------------------------------------------------
-    # Room fields
-    # ------------------------------------------------------------------
+        _set_file_label(self.intro_lbl,    room.intro_video_path)
+        _set_file_label(self.intro_fr_lbl, room.intro_video_path_fr)
+        _set_file_label(self.ending_lbl,   room.ending_video_path)
+        _set_file_label(self.bg_lbl,       room.background_image_path)
+
+        audio = database.get_audio_settings(self.room_id)
+        _set_file_label(self.alert_lbl,   audio.alert_path)
+        _set_file_label(self.music_lbl,   audio.game_music_path)
+        _set_file_label(self.success_lbl, audio.success_path)
+        _set_file_label(self.fail_lbl,    audio.fail_path)
+
+        self._refresh_objectives()
+        room = database.get_room(self.room_id)
+        if room:
+            self.clue_count_spin.blockSignals(True)
+            self.clue_count_spin.setValue(room.clue_count)
+            self.clue_count_spin.blockSignals(False)
+
+    # -----------------------------------------------------------------------
+    # General tab handlers
+    # -----------------------------------------------------------------------
 
     def _on_name_edited(self) -> None:
         name = self.name_edit.text().strip()
         if name:
             database.update_room(self.room_id, name=name)
-            self.setWindowTitle(f"Edit Room: {name}")
+            self.setWindowTitle(f"Room Setup — {name}")
 
     def _on_duration_changed(self) -> None:
-        minutes = self.duration_spin.value()
-        database.update_room(self.room_id, duration_seconds=minutes * 60)
+        database.update_room(self.room_id, duration_seconds=self.duration_spin.value() * 60)
 
     def _on_slug_changed(self, text: str) -> None:
         database.update_room(self.room_id, slug=text if text != "(none)" else None)
 
-    def _browse_intro_video(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select Briefing Video", "", VIDEO_FILE_FILTER)
-        if path:
-            database.update_room(self.room_id, intro_video_path=path)
-            self.intro_label.setText(_video_label_text(path))
-            self.intro_label.setToolTip(path)
-
-    def _clear_intro_video(self) -> None:
-        database.update_room(self.room_id, intro_video_path=None)
-        self.intro_label.setText("(none)")
-        self.intro_label.setToolTip("")
-
-    def _browse_intro_video_fr(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select Briefing Video (French)", "", VIDEO_FILE_FILTER
-        )
-        if path:
-            database.update_room(self.room_id, intro_video_path_fr=path)
-            self.intro_fr_label.setText(_video_label_text(path))
-            self.intro_fr_label.setToolTip(path)
-
-    def _clear_intro_video_fr(self) -> None:
-        database.update_room(self.room_id, intro_video_path_fr=None)
-        self.intro_fr_label.setText("(none)")
-        self.intro_fr_label.setToolTip("")
-
-    def _browse_ending_video(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select Ending Video", "", VIDEO_FILE_FILTER)
-        if path:
-            database.update_room(self.room_id, ending_video_path=path)
-            self.ending_label.setText(_video_label_text(path))
-            self.ending_label.setToolTip(path)
-
-    def _clear_ending_video(self) -> None:
-        database.update_room(self.room_id, ending_video_path=None)
-        self.ending_label.setText("(none)")
-        self.ending_label.setToolTip("")
-
-    def _browse_background_image(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select Background Image", "", IMAGE_FILE_FILTER
-        )
-        if path:
-            database.update_room(self.room_id, background_image_path=path)
-            self.background_image_label.setText(_video_label_text(path))
-            self.background_image_label.setToolTip(path)
-
-    def _clear_background_image(self) -> None:
-        database.update_room(self.room_id, background_image_path=None)
-        self.background_image_label.setText("(none)")
-        self.background_image_label.setToolTip("")
-
-    # ------------------------------------------------------------------
-    # Audio
-    # ------------------------------------------------------------------
-
-    def _browse_alert_sound(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select Alert Sound", "", AUDIO_FILE_FILTER)
-        if path:
-            database.update_audio_settings(self.room_id, alert_path=path)
-            self.alert_sound_label.setText(_video_label_text(path))
-            self.alert_sound_label.setToolTip(path)
-
-    def _clear_alert_sound(self) -> None:
-        database.update_audio_settings(self.room_id, alert_path=None)
-        self.alert_sound_label.setText("(none)")
-        self.alert_sound_label.setToolTip("")
-
-    def _browse_game_music(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select Background Music", "", AUDIO_FILE_FILTER
-        )
-        if path:
-            database.update_audio_settings(self.room_id, game_music_path=path)
-            self.game_music_label.setText(_video_label_text(path))
-            self.game_music_label.setToolTip(path)
-
-    def _clear_game_music(self) -> None:
-        database.update_audio_settings(self.room_id, game_music_path=None)
-        self.game_music_label.setText("(none)")
-        self.game_music_label.setToolTip("")
-
-    def _browse_success_sound(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select Success Sound", "", AUDIO_FILE_FILTER)
-        if path:
-            database.update_audio_settings(self.room_id, success_path=path)
-            self.success_sound_label.setText(_video_label_text(path))
-            self.success_sound_label.setToolTip(path)
-
-    def _clear_success_sound(self) -> None:
-        database.update_audio_settings(self.room_id, success_path=None)
-        self.success_sound_label.setText("(none)")
-        self.success_sound_label.setToolTip("")
-
-    def _browse_fail_sound(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select Fail Sound", "", AUDIO_FILE_FILTER)
-        if path:
-            database.update_audio_settings(self.room_id, fail_path=path)
-            self.fail_sound_label.setText(_video_label_text(path))
-            self.fail_sound_label.setToolTip(path)
-
-    def _clear_fail_sound(self) -> None:
-        database.update_audio_settings(self.room_id, fail_path=None)
-        self.fail_sound_label.setText("(none)")
-        self.fail_sound_label.setToolTip("")
-
-    # ------------------------------------------------------------------
-    # Objectives
-    # ------------------------------------------------------------------
-
-    def _refresh_objectives(self, select_id: Optional[int] = None) -> None:
-        self.objectives_list.clear()
-        for objective in database.list_objectives(self.room_id):
-            item = QListWidgetItem()
-            item.setData(Qt.ItemDataRole.UserRole, objective.id)
-            widget = self._build_objective_item_widget(objective)
-            item.setSizeHint(widget.sizeHint())
-            self.objectives_list.addItem(item)
-            self.objectives_list.setItemWidget(item, widget)
-            if objective.id == select_id:
-                self.objectives_list.setCurrentItem(item)
+    # -----------------------------------------------------------------------
+    # Puzzles tab
+    # -----------------------------------------------------------------------
 
     def _build_objective_item_widget(self, objective) -> QWidget:
         widget = QWidget()
-        layout = QHBoxLayout(widget)
-        layout.setContentsMargins(6, 4, 6, 4)
-        text = objective.title
+        row = QHBoxLayout(widget)
+        row.setContentsMargins(10, 6, 10, 6)
+        row.setSpacing(10)
+
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        title_lbl = QLabel(objective.title)
+        title_lbl.setStyleSheet("font-weight: 600; font-size: 13px;")
+        col.addWidget(title_lbl)
+
+        meta_parts = []
         if objective.code:
-            text += f"  (CODE: {objective.code})"
-        label = QLabel(text)
-        label.setWordWrap(True)
-        layout.addWidget(label, stretch=1)
-        add_cue_button = QPushButton("+ Cue")
-        add_cue_button.setToolTip("Add a clue/hint to this objective")
-        add_cue_button.clicked.connect(lambda _, oid=objective.id: self._quick_add_cue(oid))
-        layout.addWidget(add_cue_button)
+            meta_parts.append(f"Code: {objective.code}")
+        hint_count = len(database.list_hints(objective.id))
+        meta_parts.append(f"{hint_count} hint{'s' if hint_count != 1 else ''}")
+        meta_lbl = QLabel("  •  ".join(meta_parts))
+        meta_lbl.setStyleSheet("color: #6B6A80; font-size: 11px;")
+        col.addWidget(meta_lbl)
+        row.addLayout(col, stretch=1)
+
+        edit_btn = QPushButton("Edit Hints…")
+        edit_btn.setMinimumWidth(100)
+        edit_btn.setMinimumHeight(32)
+        edit_btn.clicked.connect(lambda _, oid=objective.id: self._manage_objective_by_id(oid))
+        row.addWidget(edit_btn)
         return widget
 
-    def _quick_add_cue(self, objective_id: int) -> None:
-        dialog = HintEditorDialog(parent=self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            text, rating, video_path = dialog.values()
-            if text:
-                database.add_hint(objective_id, text, rating=rating, video_path=video_path)
+    def _refresh_objectives(self, select_id: Optional[int] = None) -> None:
+        self.objectives_list.clear()
+        for obj in database.list_objectives(self.room_id):
+            item = QListWidgetItem()
+            item.setData(Qt.ItemDataRole.UserRole, obj.id)
+            widget = self._build_objective_item_widget(obj)
+            item.setSizeHint(widget.sizeHint())
+            self.objectives_list.addItem(item)
+            self.objectives_list.setItemWidget(item, widget)
+            if obj.id == select_id:
+                self.objectives_list.setCurrentItem(item)
 
     def _selected_objective_id(self) -> Optional[int]:
         item = self.objectives_list.currentItem()
         return item.data(Qt.ItemDataRole.UserRole) if item else None
 
     def _add_objective(self) -> None:
-        title, ok = QInputDialog.getText(self, "Add Objective", "Objective title:")
+        title, ok = QInputDialog.getText(self, "Add Puzzle", "Puzzle name:")
         if ok and title.strip():
             new_id = database.add_objective(self.room_id, title.strip())
             self._refresh_objectives(select_id=new_id)
-            self._manage_objective()
+            self._manage_objective_by_id(new_id)
 
     def _manage_objective(self) -> None:
-        objective_id = self._selected_objective_id()
-        if objective_id is None:
-            return
-        dialog = ObjectiveEditorDialog(objective_id, parent=self)
-        dialog.exec()
+        obj_id = self._selected_objective_id()
+        if obj_id:
+            self._manage_objective_by_id(obj_id)
+
+    def _manage_objective_by_id(self, objective_id: int) -> None:
+        dlg = ObjectiveEditorDialog(objective_id, parent=self)
+        dlg.exec()
         self._refresh_objectives(select_id=objective_id)
 
     def _delete_objective(self) -> None:
-        objective_id = self._selected_objective_id()
-        if objective_id is None:
+        obj_id = self._selected_objective_id()
+        if obj_id is None:
             return
-        if QMessageBox.question(self, "Delete Objective", "Delete this objective and its hints?") \
+        if QMessageBox.question(self, "Delete Puzzle", "Delete this puzzle and all its hints?") \
                 != QMessageBox.StandardButton.Yes:
             return
-        database.delete_objective(objective_id)
+        database.delete_objective(obj_id)
         self._refresh_objectives()
 
     def _move_objective_up(self) -> None:
-        objective_id = self._selected_objective_id()
-        if objective_id is None:
-            return
-        database.move_objective(objective_id, -1)
-        self._refresh_objectives(select_id=objective_id)
+        obj_id = self._selected_objective_id()
+        if obj_id:
+            database.move_objective(obj_id, -1)
+            self._refresh_objectives(select_id=obj_id)
 
     def _move_objective_down(self) -> None:
-        objective_id = self._selected_objective_id()
-        if objective_id is None:
-            return
-        database.move_objective(objective_id, 1)
-        self._refresh_objectives(select_id=objective_id)
+        obj_id = self._selected_objective_id()
+        if obj_id:
+            database.move_objective(obj_id, 1)
+            self._refresh_objectives(select_id=obj_id)
 
-    # ------------------------------------------------------------------
-    # Clues
-    # ------------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # Clue counter tab
+    # -----------------------------------------------------------------------
 
-    def _refresh_clues(self, select_id: Optional[int] = None) -> None:
-        self.clues_list.clear()
-        for clue in database.list_clues(self.room_id):
-            item = QListWidgetItem(clue.label)
-            item.setData(Qt.ItemDataRole.UserRole, clue.id)
-            self.clues_list.addItem(item)
-            if clue.id == select_id:
-                self.clues_list.setCurrentItem(item)
+    def _on_clue_count_changed(self) -> None:
+        database.update_room(self.room_id, clue_count=self.clue_count_spin.value())
 
-    def _selected_clue_id(self) -> Optional[int]:
-        item = self.clues_list.currentItem()
-        return item.data(Qt.ItemDataRole.UserRole) if item else None
+    # -----------------------------------------------------------------------
+    # Media tab — videos
+    # -----------------------------------------------------------------------
 
-    def _add_clue(self) -> None:
-        label, ok = QInputDialog.getText(self, "Add Clue", "Clue label:")
-        if ok and label.strip():
-            new_id = database.add_clue(self.room_id, label.strip())
-            self._refresh_clues(select_id=new_id)
+    def _browse_intro_video(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Select Briefing Video (English)", "", VIDEO_FILE_FILTER)
+        if path:
+            path = to_portable_path(path)
+            database.update_room(self.room_id, intro_video_path=path)
+            _set_file_label(self.intro_lbl, path)
 
-    def _rename_clue(self) -> None:
-        item = self.clues_list.currentItem()
-        if item is None:
-            return
-        clue_id = item.data(Qt.ItemDataRole.UserRole)
-        label, ok = QInputDialog.getText(self, "Rename Clue", "Clue label:", text=item.text())
-        if ok and label.strip():
-            database.update_clue(clue_id, label.strip())
-            self._refresh_clues(select_id=clue_id)
+    def _clear_intro_video(self) -> None:
+        database.update_room(self.room_id, intro_video_path=None)
+        _set_file_label(self.intro_lbl, None)
 
-    def _delete_clue(self) -> None:
-        clue_id = self._selected_clue_id()
-        if clue_id is None:
-            return
-        database.delete_clue(clue_id)
-        self._refresh_clues()
+    def _browse_intro_video_fr(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Select Briefing Video (French)", "", VIDEO_FILE_FILTER)
+        if path:
+            path = to_portable_path(path)
+            database.update_room(self.room_id, intro_video_path_fr=path)
+            _set_file_label(self.intro_fr_lbl, path)
 
-    def _move_clue_up(self) -> None:
-        clue_id = self._selected_clue_id()
-        if clue_id is None:
-            return
-        database.move_clue(clue_id, -1)
-        self._refresh_clues(select_id=clue_id)
+    def _clear_intro_video_fr(self) -> None:
+        database.update_room(self.room_id, intro_video_path_fr=None)
+        _set_file_label(self.intro_fr_lbl, None)
 
-    def _move_clue_down(self) -> None:
-        clue_id = self._selected_clue_id()
-        if clue_id is None:
-            return
-        database.move_clue(clue_id, 1)
-        self._refresh_clues(select_id=clue_id)
+    def _browse_ending_video(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Select Ending Video", "", VIDEO_FILE_FILTER)
+        if path:
+            path = to_portable_path(path)
+            database.update_room(self.room_id, ending_video_path=path)
+            _set_file_label(self.ending_lbl, path)
+
+    def _clear_ending_video(self) -> None:
+        database.update_room(self.room_id, ending_video_path=None)
+        _set_file_label(self.ending_lbl, None)
+
+    def _browse_background_image(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Select Background Image", "", IMAGE_FILE_FILTER)
+        if path:
+            path = to_portable_path(path)
+            database.update_room(self.room_id, background_image_path=path)
+            _set_file_label(self.bg_lbl, path)
+
+    def _clear_background_image(self) -> None:
+        database.update_room(self.room_id, background_image_path=None)
+        _set_file_label(self.bg_lbl, None)
+
+    # -----------------------------------------------------------------------
+    # Media tab — audio
+    # -----------------------------------------------------------------------
+
+    def _browse_alert_sound(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Select Alert Sound", "", AUDIO_FILE_FILTER)
+        if path:
+            path = to_portable_path(path)
+            database.update_audio_settings(self.room_id, alert_path=path)
+            _set_file_label(self.alert_lbl, path)
+
+    def _clear_alert_sound(self) -> None:
+        database.update_audio_settings(self.room_id, alert_path=None)
+        _set_file_label(self.alert_lbl, None)
+
+    def _browse_game_music(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Select Background Music", "", AUDIO_FILE_FILTER)
+        if path:
+            path = to_portable_path(path)
+            database.update_audio_settings(self.room_id, game_music_path=path)
+            _set_file_label(self.music_lbl, path)
+
+    def _clear_game_music(self) -> None:
+        database.update_audio_settings(self.room_id, game_music_path=None)
+        _set_file_label(self.music_lbl, None)
+
+    def _browse_success_sound(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Select Success Sound", "", AUDIO_FILE_FILTER)
+        if path:
+            path = to_portable_path(path)
+            database.update_audio_settings(self.room_id, success_path=path)
+            _set_file_label(self.success_lbl, path)
+
+    def _clear_success_sound(self) -> None:
+        database.update_audio_settings(self.room_id, success_path=None)
+        _set_file_label(self.success_lbl, None)
+
+    def _browse_fail_sound(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Select Fail Sound", "", AUDIO_FILE_FILTER)
+        if path:
+            path = to_portable_path(path)
+            database.update_audio_settings(self.room_id, fail_path=path)
+            _set_file_label(self.fail_lbl, path)
+
+    def _clear_fail_sound(self) -> None:
+        database.update_audio_settings(self.room_id, fail_path=None)
+        _set_file_label(self.fail_lbl, None)

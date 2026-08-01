@@ -14,6 +14,7 @@ class Room:
     intro_video_path_fr: Optional[str] = None
     background_image_path: Optional[str] = None
     slug: Optional[str] = None
+    clue_count: int = 3
 
 
 @dataclass

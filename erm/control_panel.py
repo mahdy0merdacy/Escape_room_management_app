@@ -1,6 +1,7 @@
 """Live game-master Control Panel: objectives, clue cards, message feed,
 timer and session controls, plus the player-facing display window."""
 
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
@@ -33,6 +34,7 @@ from PyQt6.QtWidgets import (
 )
 
 from erm import audio, database, turso
+from erm.paths import resolve_path, to_portable_path
 from erm.constants import APP_VERSION, AUDIO_EXTENSIONS
 from erm.player_window import PlayerWindow
 from erm.room_editor import HintEditorDialog, RoomEditorDialog
@@ -146,25 +148,122 @@ class _BookingPickerDialog(QDialog):
         self.accept()
 
 
+class _TursoSetupDialog(QDialog):
+    """Prompts the operator to enter Turso credentials for booking sync."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Connect to Booking Website")
+        self.setModal(True)
+        self.setFixedSize(520, 300)
+        self.setStyleSheet(CONTROL_PANEL_STYLE)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 20, 24, 20)
+        layout.setSpacing(12)
+
+        title = QLabel("Booking Website Credentials")
+        title.setStyleSheet("font-size: 15px; font-weight: bold; color: #E0E0E0;")
+        layout.addWidget(title)
+
+        info = QLabel(
+            "Get these from your Turso dashboard (turso.tech):\n"
+            "  1. Open your database  →  copy the URL\n"
+            "  2. Go to Tokens  →  create or copy your auth token"
+        )
+        info.setStyleSheet("color: #9090A0; font-size: 12px;")
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        layout.addSpacing(4)
+
+        url_label = QLabel("Database URL")
+        url_label.setStyleSheet("color: #C0C0D0; font-size: 12px;")
+        layout.addWidget(url_label)
+        self._url_edit = QLineEdit()
+        self._url_edit.setPlaceholderText("libsql://your-db-name.turso.io")
+        self._url_edit.setText(os.environ.get("TURSO_DATABASE_URL", ""))
+        layout.addWidget(self._url_edit)
+
+        token_label = QLabel("Auth Token")
+        token_label.setStyleSheet("color: #C0C0D0; font-size: 12px;")
+        layout.addWidget(token_label)
+        self._token_edit = QLineEdit()
+        self._token_edit.setPlaceholderText("eyJh...")
+        self._token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self._token_edit.setText(os.environ.get("TURSO_AUTH_TOKEN", ""))
+        layout.addWidget(self._token_edit)
+
+        layout.addStretch()
+
+        btn_row = QHBoxLayout()
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+        btn_row.addStretch()
+        save_btn = QPushButton("Save & Connect")
+        save_btn.setObjectName("primaryButton")
+        save_btn.clicked.connect(self._save)
+        btn_row.addWidget(save_btn)
+        layout.addLayout(btn_row)
+
+    def _save(self) -> None:
+        url = self._url_edit.text().strip()
+        token = self._token_edit.text().strip()
+        if not url or not token:
+            QMessageBox.warning(self, "Missing fields", "Both Database URL and Auth Token are required.")
+            return
+
+        # Apply immediately so the app can use them right away
+        os.environ["TURSO_DATABASE_URL"] = url
+        os.environ["TURSO_AUTH_TOKEN"] = token
+
+        # Persist to .env next to exe (or next to main.py in dev mode)
+        import sys
+        base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent.parent
+        env_path = base / ".env"
+        lines = []
+        if env_path.exists():
+            for line in env_path.read_text(encoding="utf-8").splitlines():
+                k = line.split("=", 1)[0].strip()
+                if k not in ("TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN"):
+                    lines.append(line)
+        lines.append(f"TURSO_DATABASE_URL={url}")
+        lines.append(f"TURSO_AUTH_TOKEN={token}")
+        env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        self.accept()
+
+
 class _GameOverDialog(QDialog):
     """Modal summary shown when the game ends (win or time-up)."""
+
+    ADD_TIME = 2  # custom done() code returned when operator adds extra time
 
     def __init__(self, won: bool, room_name: str, session, room_duration: int, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Game Over")
         self.setModal(True)
-        self.setFixedSize(420, 320)
+        self.extra_seconds = 0
         self.setStyleSheet(self.parent().styleSheet() if self.parent() else "")
 
-        accent = "#F5C518" if won else "#FF3B3B"
-        headline = "ESCAPED!" if won else "TIME'S UP"
-        subtitle = "The team beat the room!" if won else "The team ran out of time."
+        if won:
+            self.setFixedSize(420, 310)
+            self._build_win(room_name, session, room_duration)
+        else:
+            self.setFixedSize(420, 370)
+            self._build_loss(room_name, session, room_duration)
+
+    # ------------------------------------------------------------------ win
+    def _build_win(self, room_name: str, session, room_duration: int) -> None:
+        escape_sec = max(0, room_duration - session.remaining_seconds)
+        accent = "#F5C518"
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(36, 28, 36, 28)
+        layout.setContentsMargins(36, 24, 36, 24)
         layout.setSpacing(0)
 
-        hl = QLabel(headline)
+        hl = QLabel("ESCAPED!")
         hl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hl.setStyleSheet(
             f"font-size: 40px; font-weight: bold; color: {accent}; "
@@ -177,47 +276,115 @@ class _GameOverDialog(QDialog):
         room_lbl.setStyleSheet("color: #8899AA; font-size: 13px; background: transparent;")
         layout.addWidget(room_lbl)
 
-        sub_lbl = QLabel(subtitle)
-        sub_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sub_lbl.setStyleSheet(f"color: {accent}; font-size: 14px; background: transparent; margin-top: 4px;")
-        layout.addWidget(sub_lbl)
+        time_lbl = QLabel(f"Escaped in  {_format_time(escape_sec)}")
+        time_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        time_lbl.setStyleSheet(
+            f"color: {accent}; font-size: 24px; font-weight: bold; "
+            "background: transparent; margin-top: 10px;"
+        )
+        layout.addWidget(time_lbl)
 
-        layout.addSpacing(20)
+        layout.addSpacing(14)
 
         card = QWidget()
         card.setObjectName("columnPanel")
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(16, 12, 16, 12)
         card_layout.setSpacing(8)
-
-        stats = []
-        if won:
-            stats.append(("Time used", _format_time(session.elapsed_seconds), "#CCDDEE"))
-            stats.append(("Time remaining", _format_time(session.remaining_seconds), accent))
-        else:
-            stats.append(("Time limit", _format_time(room_duration), "#CCDDEE"))
-        stats.append(("Messages sent", str(session.messages_sent), "#CCDDEE"))
-
-        for label, value, color in stats:
+        for label, value, color in [
+            ("Time remaining", _format_time(session.remaining_seconds), "#CCDDEE"),
+            ("Hints used",     str(session.messages_sent),              "#CCDDEE"),
+        ]:
             row = QHBoxLayout()
-            row.setSpacing(8)
             lbl = QLabel(label)
             lbl.setStyleSheet("color: #8899AA; background: transparent; font-size: 13px;")
             val = QLabel(value)
             val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             val.setStyleSheet(f"color: {color}; font-weight: bold; background: transparent; font-size: 13px;")
-            row.addWidget(lbl)
-            row.addStretch()
-            row.addWidget(val)
+            row.addWidget(lbl); row.addStretch(); row.addWidget(val)
             card_layout.addLayout(row)
-
         layout.addWidget(card)
-        layout.addSpacing(20)
 
+        layout.addSpacing(16)
         close_btn = QPushButton("Close")
         close_btn.setObjectName("primaryButton")
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
+
+    # ----------------------------------------------------------------- loss
+    def _build_loss(self, room_name: str, session, room_duration: int) -> None:
+        accent = "#FF3B3B"
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(36, 24, 36, 24)
+        layout.setSpacing(0)
+
+        hl = QLabel("TIME'S UP")
+        hl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hl.setStyleSheet(
+            f"font-size: 40px; font-weight: bold; color: {accent}; "
+            "background: transparent; letter-spacing: 2px;"
+        )
+        layout.addWidget(hl)
+
+        room_lbl = QLabel(room_name)
+        room_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        room_lbl.setStyleSheet("color: #8899AA; font-size: 13px; background: transparent;")
+        layout.addWidget(room_lbl)
+
+        sub_lbl = QLabel("The team ran out of time.")
+        sub_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub_lbl.setStyleSheet(
+            f"color: {accent}; font-size: 14px; background: transparent; margin-top: 4px;"
+        )
+        layout.addWidget(sub_lbl)
+
+        layout.addSpacing(14)
+
+        card = QWidget()
+        card.setObjectName("columnPanel")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(16, 12, 16, 12)
+        card_layout.setSpacing(8)
+        for label, value, color in [
+            ("Time limit",  _format_time(room_duration),     "#CCDDEE"),
+            ("Hints used",  str(session.messages_sent),      "#CCDDEE"),
+        ]:
+            row = QHBoxLayout()
+            lbl = QLabel(label)
+            lbl.setStyleSheet("color: #8899AA; background: transparent; font-size: 13px;")
+            val = QLabel(value)
+            val.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            val.setStyleSheet(f"color: {color}; font-weight: bold; background: transparent; font-size: 13px;")
+            row.addWidget(lbl); row.addStretch(); row.addWidget(val)
+            card_layout.addLayout(row)
+        layout.addWidget(card)
+
+        layout.addSpacing(14)
+
+        # Add-time row
+        add_row = QHBoxLayout()
+        add_row.setSpacing(8)
+        self._extra_spin = QSpinBox()
+        self._extra_spin.setRange(1, 30)
+        self._extra_spin.setValue(5)
+        self._extra_spin.setSuffix(" min")
+        self._extra_spin.setFixedWidth(86)
+        add_row.addWidget(self._extra_spin)
+        add_btn = QPushButton("Add Time & Continue")
+        add_btn.setObjectName("primaryButton")
+        add_btn.clicked.connect(self._on_add_time)
+        add_row.addWidget(add_btn)
+        layout.addLayout(add_row)
+
+        layout.addSpacing(8)
+        end_btn = QPushButton("End Game")
+        end_btn.clicked.connect(self.reject)
+        layout.addWidget(end_btn)
+
+    def _on_add_time(self) -> None:
+        self.extra_seconds = self._extra_spin.value() * 60
+        self.done(self.ADD_TIME)
 
 
 class ControlPanelWindow(QMainWindow):
@@ -252,6 +419,10 @@ class ControlPanelWindow(QMainWindow):
 
         self._build_ui()
         self.refresh_all()
+        # Auto-reset any completed session so the timer always opens at full duration
+        session = database.get_session(room_id)
+        if session.status == "completed":
+            self._start_fresh_session(status="idle")
 
     # ------------------------------------------------------------------
     # UI construction
@@ -344,7 +515,7 @@ class ControlPanelWindow(QMainWindow):
         layout.addWidget(self.room_name_label)
         layout.addStretch(1)
 
-        self.edit_room_button = QPushButton("Edit Objectives & Clues")
+        self.edit_room_button = QPushButton("Room Setup")
         self.edit_room_button.clicked.connect(self._open_room_editor)
         layout.addWidget(self.edit_room_button)
 
@@ -685,43 +856,7 @@ class ControlPanelWindow(QMainWindow):
         self.timer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         content_layout.addWidget(self.timer_label)
 
-        # Minutes adjustment row
-        adjust_row = QHBoxLayout()
-        minus_button = QPushButton("-")
-        minus_button.setFixedWidth(32)
-        minus_button.clicked.connect(self._decrement_delta)
-        adjust_row.addWidget(minus_button)
-        self.delta_spin = QSpinBox()
-        self.delta_spin.setRange(-10, 10)
-        self.delta_spin.setValue(1)
-        self.delta_spin.setSuffix(" min")
-        adjust_row.addWidget(self.delta_spin, stretch=1)
-        plus_button = QPushButton("+")
-        plus_button.setFixedWidth(32)
-        plus_button.clicked.connect(self._increment_delta)
-        adjust_row.addWidget(plus_button)
-        content_layout.addLayout(adjust_row)
-
-        # Seconds adjustment row
-        adjust_seconds_row = QHBoxLayout()
-        minus_seconds_button = QPushButton("-")
-        minus_seconds_button.setFixedWidth(32)
-        minus_seconds_button.clicked.connect(self._decrement_delta_seconds)
-        adjust_seconds_row.addWidget(minus_seconds_button)
-        self.delta_seconds_spin = QSpinBox()
-        self.delta_seconds_spin.setRange(-59, 59)
-        self.delta_seconds_spin.setValue(0)
-        self.delta_seconds_spin.setSuffix(" sec")
-        adjust_seconds_row.addWidget(self.delta_seconds_spin, stretch=1)
-        plus_seconds_button = QPushButton("+")
-        plus_seconds_button.setFixedWidth(32)
-        plus_seconds_button.clicked.connect(self._increment_delta_seconds)
-        adjust_seconds_row.addWidget(plus_seconds_button)
-        content_layout.addLayout(adjust_seconds_row)
-
-        add_time_button = QPushButton("Add time")
-        add_time_button.clicked.connect(self._on_add_time)
-        content_layout.addWidget(add_time_button)
+        content_layout.addWidget(self._build_time_adjuster())
 
         self.start_pause_button = QPushButton("Start game")
         self.start_pause_button.setObjectName("primaryButton")
@@ -739,6 +874,8 @@ class ControlPanelWindow(QMainWindow):
         clue_tracker_header.setObjectName("sectionHeader")
         content_layout.addWidget(clue_tracker_header)
         self.clue_buttons_layout = QHBoxLayout()
+        self.clue_buttons_layout.setSpacing(8)
+        self.clue_buttons_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
         clue_buttons_container = QWidget()
         clue_buttons_container.setLayout(self.clue_buttons_layout)
         content_layout.addWidget(clue_buttons_container)
@@ -770,6 +907,36 @@ class ControlPanelWindow(QMainWindow):
         controls_scroll.setWidget(content)
         layout.addWidget(controls_scroll, stretch=1)
         return panel
+
+    def _build_time_adjuster(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        def _make_row(specs: list[tuple[str, int, str]]) -> QHBoxLayout:
+            row = QHBoxLayout()
+            row.setSpacing(5)
+            for label, delta, obj_name in specs:
+                btn = QPushButton(label)
+                btn.setObjectName(obj_name)
+                btn.clicked.connect(lambda _, d=delta: self._apply_time_delta(d))
+                row.addWidget(btn)
+            return row
+
+        layout.addLayout(_make_row([
+            ("−5 min", -300, "timeRemoveBtn"),
+            ("−1 min", -60,  "timeRemoveBtn"),
+            ("+1 min",  60,  "timeAddBtn"),
+            ("+5 min",  300, "timeAddBtn"),
+        ]))
+        layout.addLayout(_make_row([
+            ("−30 sec", -30, "timeRemoveBtn"),
+            ("−10 sec", -10, "timeRemoveBtn"),
+            ("+10 sec",  10, "timeAddBtn"),
+            ("+30 sec",  30, "timeAddBtn"),
+        ]))
+        return widget
 
     def _build_stat_box(self, label_text: str) -> tuple[QWidget, QLabel]:
         box = QFrame()
@@ -837,7 +1004,7 @@ class ControlPanelWindow(QMainWindow):
         self._refresh_video_strips()
         self._apply_audio_settings()
         if self.player_window is not None:
-            self.player_window.set_background_image(self.room.background_image_path)
+            self.player_window.set_background_image(resolve_path(self.room.background_image_path))
         self._update_bottom_bar()
 
     def _refresh_briefing_buttons(self) -> None:
@@ -1153,7 +1320,7 @@ class ControlPanelWindow(QMainWindow):
             self._sync_player_clue_states()
             session = database.get_session(self.room_id)
             self.player_window.set_time(session.remaining_seconds)
-            self.player_window.set_background_image(self.room.background_image_path)
+            self.player_window.set_background_image(resolve_path(self.room.background_image_path))
             self._apply_audio_settings()
             if session.status == "running":
                 self.player_window.play_music()
@@ -1184,6 +1351,7 @@ class ControlPanelWindow(QMainWindow):
         return None
 
     def _play_video(self, path: str, on_finished: Optional[Callable[[], None]] = None) -> None:
+        path = resolve_path(path) or path
         player = self._ensure_player_window()
         self._current_video_path = path
         self._video_finished_callback = on_finished
@@ -1273,7 +1441,7 @@ class ControlPanelWindow(QMainWindow):
         if self.player_window is None:
             return
         settings = self.audio_settings
-        self.player_window.set_music(settings.game_music_path)
+        self.player_window.set_music(resolve_path(settings.game_music_path))
         music_volume = audio.effective_volume(
             settings.game_music_volume,
             settings.game_music_muted,
@@ -1308,14 +1476,14 @@ class ControlPanelWindow(QMainWindow):
                 settings.master_volume,
                 settings.master_muted,
             )
-            audio.play_file(settings.game_music_path, volume)
+            audio.play_file(resolve_path(settings.game_music_path), volume)
 
     def _play_alert_sound(self) -> None:
         settings = self.audio_settings
         volume = audio.effective_volume(
             settings.alert_volume, settings.alert_muted, settings.master_volume, settings.master_muted
         )
-        audio.play_alert(settings.alert_path, volume)
+        audio.play_alert(resolve_path(settings.alert_path), volume)
 
     def _play_success_sound(self) -> None:
         settings = self.audio_settings
@@ -1325,7 +1493,7 @@ class ControlPanelWindow(QMainWindow):
             settings.master_volume,
             settings.master_muted,
         )
-        audio.play_success(settings.success_path, volume)
+        audio.play_success(resolve_path(settings.success_path), volume)
 
     def _play_fail_sound(self) -> None:
         settings = self.audio_settings
@@ -1333,13 +1501,13 @@ class ControlPanelWindow(QMainWindow):
             settings.fail_volume, settings.fail_muted, settings.master_volume, settings.master_muted
         )
         if settings.fail_path:
-            audio.play_fail(settings.fail_path, volume)
+            audio.play_fail(resolve_path(settings.fail_path), volume)
         else:
             audio.play_alert(None, volume)
 
     def _on_play_sfx(self, n: int) -> None:
         settings = self.audio_settings
-        path = getattr(settings, f"sfx{n}_path")
+        path = resolve_path(getattr(settings, f"sfx{n}_path"))
         if not path:
             return
         # SFX uses only its own channel volume — not reduced by master — so
@@ -1376,7 +1544,7 @@ class ControlPanelWindow(QMainWindow):
                 "Audio Files (*.mp3 *.wav *.ogg *.flac *.aac *.m4a);;All Files (*)"
             )
             if path:
-                database.update_audio_settings(self.room_id, **{f"sfx{n}_path": path})
+                database.update_audio_settings(self.room_id, **{f"sfx{n}_path": to_portable_path(path)})
                 self.audio_settings = database.get_audio_settings(self.room_id)
                 self._refresh_audio_mixer()
         elif action == clear_action:
@@ -1472,25 +1640,33 @@ class ControlPanelWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _refresh_clue_buttons(self) -> None:
+        room = database.get_room(self.room_id)
+        count = room.clue_count if room else 3
+
+        # Only rebuild when the count changes — preserves checked state mid-session
+        if len(self.clue_buttons) == count:
+            self._sync_player_clue_states()
+            return
+
         while self.clue_buttons_layout.count():
             item = self.clue_buttons_layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
         self.clue_buttons = []
-        for clue in database.list_clues(self.room_id):
-            button = ClueLockButton(label=clue.label)
-            button.setChecked(clue.checked)
-            button.toggled.connect(
-                lambda checked, clue_id=clue.id: self._on_clue_toggled(clue_id, checked)
-            )
+
+        for i in range(count):
+            button = ClueLockButton(number=i + 1)
+            button.toggled.connect(self._sync_player_clue_states)
             self.clue_buttons_layout.addWidget(button)
             self.clue_buttons.append(button)
+
         self._sync_player_clue_states()
 
-    def _on_clue_toggled(self, clue_id: int, checked: bool) -> None:
-        database.set_clue_progress(self.room_id, clue_id, checked)
-        self._sync_player_clue_states()
+    def _reset_clue_buttons(self) -> None:
+        """Uncheck all clue buttons — called at session start/reset."""
+        for btn in self.clue_buttons:
+            btn.setChecked(False)
 
     def _sync_player_clue_states(self) -> None:
         if self.player_window is not None:
@@ -1504,28 +1680,9 @@ class ControlPanelWindow(QMainWindow):
     # Timer / session lifecycle
     # ------------------------------------------------------------------
 
-    def _decrement_delta(self) -> None:
-        self.delta_spin.setValue(self.delta_spin.value() - 1)
-
-    def _increment_delta(self) -> None:
-        self.delta_spin.setValue(self.delta_spin.value() + 1)
-
-    def _decrement_delta_seconds(self) -> None:
-        self.delta_seconds_spin.setValue(self.delta_seconds_spin.value() - 1)
-
-    def _increment_delta_seconds(self) -> None:
-        self.delta_seconds_spin.setValue(self.delta_seconds_spin.value() + 1)
-
-    def _on_add_time(self) -> None:
-        delta_minutes = self.delta_spin.value()
-        delta_seconds = self.delta_seconds_spin.value()
-        delta_total_seconds = (delta_minutes * 60) + delta_seconds
-        if delta_total_seconds == 0:
-            return
-        session = database.adjust_session_time(self.room_id, delta_total_seconds)
+    def _apply_time_delta(self, delta_seconds: int) -> None:
+        session = database.adjust_session_time(self.room_id, delta_seconds)
         self.timer_label.setText(_format_time(session.remaining_seconds))
-        # Reset the seconds spinner after adding time
-        self.delta_seconds_spin.setValue(0)
         if self.player_window is not None:
             self.player_window.set_time(session.remaining_seconds)
         self._refresh_stats()
@@ -1546,7 +1703,11 @@ class ControlPanelWindow(QMainWindow):
             room = database.get_room(self.room_id)
             turso.push_success_rate(room.slug, room.wins, room.wins + room.losses)
             session = database.get_session(self.room_id)
-            _GameOverDialog(False, self.room.name, session, self.room.duration_seconds, self).exec()
+            dlg = _GameOverDialog(False, self.room.name, session, self.room.duration_seconds, self)
+            if dlg.exec() == _GameOverDialog.ADD_TIME:
+                self._add_extra_time(dlg.extra_seconds)
+            else:
+                self._start_fresh_session(status="idle")
         else:
             database.save_session(self.room_id, "running", remaining, elapsed_seconds=new_elapsed)
             self.timer_label.setText(_format_time(remaining))
@@ -1556,6 +1717,7 @@ class ControlPanelWindow(QMainWindow):
     def _start_fresh_session(self, status: str = "running") -> None:
         database.start_session(self.room_id, status=status)
         self.feed_list.clear()
+        self._reset_clue_buttons()
         if status == "running":
             self._ensure_player_window()
         if self.player_window is not None:
@@ -1595,9 +1757,10 @@ class ControlPanelWindow(QMainWindow):
                 room.slug,
                 self._current_booking.get("customerName", "Unknown"),
                 int(self._current_booking.get("partySize") or 0),
-                session.elapsed_seconds,
+                max(0, room.duration_seconds - session.remaining_seconds),
             )
         _GameOverDialog(True, self.room.name, session, self.room.duration_seconds, self).exec()
+        self._start_fresh_session(status="idle")
 
     def _on_reset_game(self) -> None:
         if (
@@ -1611,6 +1774,16 @@ class ControlPanelWindow(QMainWindow):
         self._current_booking = None
         self._refresh_link_group_button()
         self._start_fresh_session(status="idle")
+
+    def _add_extra_time(self, extra_seconds: int) -> None:
+        """Undo the time-up loss and resume the game with extra_seconds added."""
+        database.undo_loss(self.room_id)
+        database.save_session(self.room_id, "running", extra_seconds)
+        if self.player_window is not None:
+            self.player_window.show_timer()
+            self.player_window.clear_message()
+        self.timer.start()
+        self.refresh_all()
 
     # ------------------------------------------------------------------
     # Room editor
@@ -1649,6 +1822,13 @@ class ControlPanelWindow(QMainWindow):
                 "Set a website slug for this room in Edit Objectives & Clues first.",
             )
             return
+
+        # If credentials are missing, let the operator enter them first
+        if not os.environ.get("TURSO_DATABASE_URL") or not os.environ.get("TURSO_AUTH_TOKEN"):
+            setup = _TursoSetupDialog(self)
+            if setup.exec() != QDialog.DialogCode.Accepted:
+                return  # user cancelled
+
         bookings, error = turso.fetch_bookings(self.room.slug)
         dlg = _BookingPickerDialog(bookings, error, self)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.selected:

@@ -159,6 +159,7 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "rooms", "intro_video_path_fr", "intro_video_path_fr TEXT")
     _ensure_column(conn, "rooms", "background_image_path", "background_image_path TEXT")
     _ensure_column(conn, "rooms", "slug", "slug TEXT")
+    _ensure_column(conn, "rooms", "clue_count", "clue_count INTEGER NOT NULL DEFAULT 3")
     for n in (1, 2, 3):
         _ensure_column(conn, "room_audio_settings", f"sfx{n}_volume", f"sfx{n}_volume INTEGER NOT NULL DEFAULT 100")
         _ensure_column(conn, "room_audio_settings", f"sfx{n}_muted", f"sfx{n}_muted INTEGER NOT NULL DEFAULT 0")
@@ -189,6 +190,7 @@ def _row_to_room(row: sqlite3.Row) -> Room:
         intro_video_path_fr=row["intro_video_path_fr"],
         background_image_path=row["background_image_path"],
         slug=row["slug"] if "slug" in row.keys() else None,
+        clue_count=row["clue_count"] if "clue_count" in row.keys() else 3,
     )
 
 
@@ -231,6 +233,7 @@ def update_room(room_id: int, **fields) -> None:
         "intro_video_path_fr",
         "background_image_path",
         "slug",
+        "clue_count",
     }
     columns = [key for key in fields if key in allowed]
     if not columns:
@@ -253,6 +256,13 @@ def record_result(room_id: int, won: bool) -> None:
     column = "wins" if won else "losses"
     conn = get_connection()
     conn.execute(f"UPDATE rooms SET {column} = {column} + 1 WHERE id = ?", (room_id,))
+    conn.commit()
+
+
+def undo_loss(room_id: int) -> None:
+    """Decrement the loss counter by 1 (used when extra time is granted after time-up)."""
+    conn = get_connection()
+    conn.execute("UPDATE rooms SET losses = MAX(0, losses - 1) WHERE id = ?", (room_id,))
     conn.commit()
 
 
