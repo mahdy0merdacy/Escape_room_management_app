@@ -8,6 +8,9 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write   # required to create/update releases
+
     steps:
       - uses: actions/checkout@v4
 
@@ -16,15 +19,35 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install pyinstaller
+        run: pip install -r requirements.txt pyinstaller
 
       - name: Build executable
-        run: pyinstaller --noconfirm escape_room_master.spec
+        run: pyinstaller EscapeRoomMaster.spec --noconfirm
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - name: Create media/data folders inside dist
+        shell: cmd
+        run: |
+          mkdir dist\EscapeRoomMaster\data
+          mkdir dist\EscapeRoomMaster\media\videos
+          mkdir dist\EscapeRoomMaster\media\audio
+          mkdir dist\EscapeRoomMaster\media\images
+
+      - name: Zip the app folder
+        shell: pwsh
+        run: Compress-Archive -Path dist\EscapeRoomMaster\* -DestinationPath EscapeRoomMaster-windows.zip
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: EscapeRoomMaster-windows-${{ github.run_number }}
-          path: dist/EscapeRoomMaster.exe
+          tag_name: build-${{ github.run_number }}
+          name: "Build #${{ github.run_number }}"
+          body: |
+            Automated Windows build from commit ${{ github.sha }}.
+
+            **How to install:**
+            1. Download and unzip `EscapeRoomMaster-windows.zip`
+            2. Put your videos/audio/images in the `media/` subfolders
+            3. Run `EscapeRoomMaster.exe`
+            4. Your database lives in `data/` — copy the whole folder to move to another PC
+          files: EscapeRoomMaster-windows.zip
+          make_latest: true
